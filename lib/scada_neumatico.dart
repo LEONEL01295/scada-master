@@ -63,7 +63,8 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
   double _pressure = 1.0;
 
   final TextEditingController _piezasController = TextEditingController(text: '1');
-  final List<double> _chartData = List.filled(40, 1.0);
+  final List<double> _chartData =
+      List<double>.filled(40, 1.0, growable: true);
 
   final List<_SensorModel> _sensors = [
     _SensorModel('P1', 'P1: Input Storage (Pieza)'),
@@ -92,16 +93,29 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
   void initState() {
     super.initState();
     _updateClock();
-    _clockTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if(mounted) {
+    _clockTimer = Timer.periodic(
+      const Duration(milliseconds: 500),
+      (_) {
+        if (!mounted) return;
+
         setState(() {
           _updateClock();
           _simulatePressure();
         });
-      }
+      },
+    );
+
+    // Se ejecuta después del primer frame para evitar modificar
+    // Provider mientras Flutter está construyendo la pantalla.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      _logAudit(
+        'Configuración cambiada a Modo: $_mode',
+        _NLogType.audit,
+      );
+      _resetToHome(log: false);
     });
-    _logAudit('Configuración cambiada a Modo: $_mode', _NLogType.audit);
-    _resetToHome(log: false);
   }
 
   void _updateClock() {
@@ -111,16 +125,20 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
   }
 
   void _simulatePressure() {
-    if (_act('M1').on) _pressure += 0.2;
-    else _pressure -= 0.05;
-    _pressure += (Random().nextDouble() - 0.5) * 0.1;
-    _pressure = _pressure.clamp(1.0, 5.0);
-    if(mounted) {
-      setState(() {
-        _chartData.removeAt(0);
-        _chartData.add(_pressure);
-      });
+    if (_act('M1').on) {
+      _pressure += 0.2;
+    } else {
+      _pressure -= 0.05;
     }
+
+    _pressure += (Random().nextDouble() - 0.5) * 0.1;
+    _pressure = _pressure.clamp(1.0, 5.0).toDouble();
+
+    // _chartData es growable, por lo que removeAt y add son válidos.
+    if (_chartData.isNotEmpty) {
+      _chartData.removeAt(0);
+    }
+    _chartData.add(_pressure);
   }
 
   @override
@@ -186,19 +204,43 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
     }
   }
 
-  void _resetToHome({bool log = true}){
-    final monitor = Provider.of<UsageMonitor>(context, listen: false);
-    if(log) _logAudit('Restableciendo sistema a estado inicial...', _NLogType.audit);
-    if(mounted) {
+  void _resetToHome({bool log = true}) {
+    final monitor = Provider.of<UsageMonitor>(
+      context,
+      listen: false,
+    );
+
+    if (log) {
+      _logAudit(
+        'Restableciendo sistema a estado inicial...',
+        _NLogType.audit,
+      );
+    }
+
+    // Las modificaciones del Provider se hacen fuera de setState.
+    monitor.setStationActive('neumatico', false);
+    monitor.resetCyclePieces('neumatico');
+
+    if (mounted) {
       setState(() {
-        monitor.setStationActive('neumatico', false);
-        for (final a in _actuators) { a.on = false; }
-        for (final s in _sensors) { s.active = false; }
+        for (final actuator in _actuators) {
+          actuator.on = false;
+        }
+
+        for (final sensor in _sensors) {
+          sensor.active = false;
+        }
+
         _sensor('P1').active = true;
-        monitor.resetCyclePieces('neumatico');
       });
     }
-    if(log) _logAudit('Sistema restablecido a la posición HOME.', _NLogType.success);
+
+    if (log) {
+      _logAudit(
+        'Sistema restablecido a la posición HOME.',
+        _NLogType.success,
+      );
+    }
   }
 
   Future<void> _startAutoCycle() async {
@@ -263,17 +305,28 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
   }
 
   void _triggerEmergency() {
-    final monitor = Provider.of<UsageMonitor>(context, listen: false);
-    if(mounted) {
+    final monitor = Provider.of<UsageMonitor>(
+      context,
+      listen: false,
+    );
+
+    monitor.setStationActive('neumatico', false);
+
+    if (mounted) {
       setState(() {
-        monitor.setStationActive('neumatico', false);
-        for (final a in _actuators) { a.on = false; }
+        for (final actuator in _actuators) {
+          actuator.on = false;
+        }
       });
     }
-    // Registrar falla real en monitor
+
+    // Registrar falla real en el monitor.
     monitor.addFailure('neumatico');
 
-    _logAudit('¡PARO DE EMERGENCIA (S2) ACTIVADO! Desconectando energía...', _NLogType.error);
+    _logAudit(
+      '¡PARO DE EMERGENCIA (S2) ACTIVADO! Desconectando energía...',
+      _NLogType.error,
+    );
     if(mounted) {
       showDialog(
         context: context,

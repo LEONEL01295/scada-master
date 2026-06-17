@@ -1,17 +1,22 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-class UsageMonitor with ChangeNotifier {
+class UsageMonitor extends ChangeNotifier {
   static final UsageMonitor _instance = UsageMonitor._internal();
-  factory UsageMonitor() => _instance;
-  UsageMonitor._internal() {
-    _initPendingUsersListener();
-  }
 
-  // Tiempos de operación
+  factory UsageMonitor() => _instance;
+
+  UsageMonitor._internal();
+
+  // ==========================================================
+  // ESTADO INTERNO
+  // ==========================================================
+
   final Map<String, Duration> _stationTimes = {
     'general': Duration.zero,
     'neumatico': Duration.zero,
@@ -20,7 +25,6 @@ class UsageMonitor with ChangeNotifier {
     'prensado': Duration.zero,
   };
 
-  // Producción (Piezas terminadas)
   final Map<String, int> _stationProduction = {
     'general': 0,
     'neumatico': 0,
@@ -29,7 +33,6 @@ class UsageMonitor with ChangeNotifier {
     'prensado': 0,
   };
 
-  // Fallas (Paros de emergencia)
   final Map<String, int> _stationFailures = {
     'general': 0,
     'neumatico': 0,
@@ -38,7 +41,6 @@ class UsageMonitor with ChangeNotifier {
     'prensado': 0,
   };
 
-  // Consumo Energético
   final Map<String, double> _stationConsumption = {
     'general': 0.0,
     'neumatico': 0.0,
@@ -47,7 +49,6 @@ class UsageMonitor with ChangeNotifier {
     'prensado': 0.0,
   };
 
-  // ESTADO DE PROCESAMIENTO (Persistente al navegar)
   final Map<String, bool> _isActive = {
     'general': false,
     'neumatico': false,
@@ -56,7 +57,6 @@ class UsageMonitor with ChangeNotifier {
     'prensado': false,
   };
 
-  // Almacenamiento de progreso de piezas por estación
   final Map<String, int> _cycleFinishedPieces = {
     'general': 0,
     'neumatico': 0,
@@ -65,176 +65,357 @@ class UsageMonitor with ChangeNotifier {
     'prensado': 0,
   };
 
-  // NUEVO: Conteo de interacciones por componente (Sensor/Actuador)
   final Map<String, Map<String, int>> _componentInteractions = {
-    'general': {},
-    'neumatico': {},
-    'maquinados': {},
-    'robot': {},
-    'prensado': {},
+    'general': <String, int>{},
+    'neumatico': <String, int>{},
+    'maquinados': <String, int>{},
+    'robot': <String, int>{},
+    'prensado': <String, int>{},
   };
 
-  // NUEVO: Conteo de usuarios pendientes
   int _pendingUsersCount = 0;
-  int get pendingUsersCount => _pendingUsersCount;
 
   Timer? _ticker;
   Timer? _consumptionTimer;
-  StreamSubscription? _pendingUsersSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _pendingUsersSub;
 
-  void _initPendingUsersListener() {
-    _pendingUsersSub?.cancel();
+  bool _trackingStarted = false;
+  bool _notificationScheduled = false;
+  bool _isDisposed = false;
+
+  // ==========================================================
+  // GETTERS
+  // ==========================================================
+
+  int get pendingUsersCount => _pendingUsersCount;
+
+  Duration getStationTime(String stationId) =>
+      _stationTimes[stationId] ?? Duration.zero;
+
+  int getStationProduction(String stationId) =>
+      _stationProduction[stationId] ?? 0;
+
+  int getStationFailures(String stationId) =>
+      _stationFailures[stationId] ?? 0;
+
+  double getStationConsumption(String stationId) =>
+      _stationConsumption[stationId] ?? 0.0;
+
+  int getCycleFinishedPieces(String stationId) =>
+      _cycleFinishedPieces[stationId] ?? 0;
+
+  bool isStationActive(String stationId) =>
+      _isActive[stationId] ?? false;
+
+  Duration get totalTime =>
+      _stationTimes.values.fold(Duration.zero, (a, b) => a + b);
+
+  int get totalProduction =>
+      _stationProduction.values.fold(0, (a, b) => a + b);
+
+  int get totalFailures =>
+      _stationFailures.values.fold(0, (a, b) => a + b);
+
+  double get totalConsumption =>
+      _stationConsumption.values.fold(0.0, (a, b) => a + b);
+
+  // ==========================================================
+  // NOTIFICACIÓN SEGURA
+  // ==========================================================
+
+  /// Evita ejecutar notifyListeners() mientras Flutter está construyendo
+  /// widgets. Si el framework está en fase build, la notificación se
+  /// pospone hasta terminar el frame actual.
+  void _safeNotifyListeners() {
+    if (_isDisposed) return;
+
+    final SchedulerPhase phase =
+        SchedulerBinding.instance.schedulerPhase;
+
+    final bool frameworkIsBuilding =
+        phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks;
+
+    if (frameworkIsBuilding) {
+      if (_notificationScheduled) return;
+
+      _notificationScheduled = true;
+
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        _notificationScheduled = false;
+
+        if (!_isDisposed) {
+          notifyListeners();
+        }
+      });
+
+      return;
+    }
+
+    notifyListeners();
+  }
+
+  // ==========================================================
+  // INICIALIZACIÓN
+  // ==========================================================
+
+  void startTracking() {
+    if (_trackingStarted || _isDisposed) return;
+
+    _trackingStarted = true;
+
+    // Se inicia fuera del constructor para evitar notificaciones mientras
+    // MultiProvider todavía está construyendo su árbol.
+    Future<void>.microtask(_initPendingUsersListener);
+
+    _ticker = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        bool changed = false;
+
+        _isActive.forEach((String station, bool active) {
+          if (!active) return;
+
+          _stationTimes[station] =
+              (_stationTimes[station] ?? Duration.zero) +
+                  const Duration(seconds: 1);
+
+          changed = true;
+        });
+
+        if (changed) {
+          _safeNotifyListeners();
+        }
+      },
+    );
+
+    _consumptionTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) {
+        bool changed = false;
+
+        _isActive.forEach((String station, bool active) {
+          if (!active) return;
+
+          _stationConsumption[station] =
+              (_stationConsumption[station] ?? 0.0) + 0.05;
+
+          changed = true;
+        });
+
+        if (changed) {
+          _safeNotifyListeners();
+        }
+      },
+    );
+  }
+
+  Future<void> _initPendingUsersListener() async {
+    if (_isDisposed) return;
+
+    await _pendingUsersSub?.cancel();
+
     _pendingUsersSub = FirebaseFirestore.instance
         .collection('usuarios')
         .where('rol', isEqualTo: 'Pendiente')
         .snapshots()
-        .listen((snapshot) {
-      _pendingUsersCount = snapshot.docs.length;
-      notifyListeners();
-    });
+        .listen(
+      (QuerySnapshot<Map<String, dynamic>> snapshot) {
+        final int newCount = snapshot.docs.length;
+
+        if (newCount == _pendingUsersCount) {
+          return;
+        }
+
+        _pendingUsersCount = newCount;
+        _safeNotifyListeners();
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint(
+          'Error escuchando usuarios pendientes: $error',
+        );
+      },
+    );
   }
 
-  // NUEVO: Registro de auditoría centralizado con Identidad de Usuario
+  // ==========================================================
+  // ESTADO DE ESTACIONES
+  // ==========================================================
+
+  void setStationActive(String stationId, bool active) {
+    if (!_isActive.containsKey(stationId)) {
+      debugPrint(
+        'UsageMonitor: estación desconocida: $stationId',
+      );
+      return;
+    }
+
+    // Evita reconstrucciones innecesarias.
+    if (_isActive[stationId] == active) {
+      return;
+    }
+
+    _isActive[stationId] = active;
+    _safeNotifyListeners();
+  }
+
+  void addProduction(String stationId) {
+    if (!_stationProduction.containsKey(stationId)) return;
+
+    _stationProduction[stationId] =
+        (_stationProduction[stationId] ?? 0) + 1;
+
+    _cycleFinishedPieces[stationId] =
+        (_cycleFinishedPieces[stationId] ?? 0) + 1;
+
+    _safeNotifyListeners();
+
+    unawaited(syncStationAuditoria(stationId));
+  }
+
+  void addFailure(String stationId) {
+    if (!_stationFailures.containsKey(stationId)) return;
+
+    _stationFailures[stationId] =
+        (_stationFailures[stationId] ?? 0) + 1;
+
+    _safeNotifyListeners();
+
+    unawaited(syncStationAuditoria(stationId));
+  }
+
+  void incrementComponentInteraction(
+    String stationId,
+    String type,
+    String componentId,
+  ) {
+    final Map<String, int>? interactions =
+        _componentInteractions[stationId];
+
+    if (interactions == null) return;
+
+    final String key = '${type}_$componentId';
+
+    interactions[key] = (interactions[key] ?? 0) + 1;
+
+    _safeNotifyListeners();
+
+    unawaited(syncStationAuditoria(stationId));
+  }
+
+  void resetCyclePieces(String stationId) {
+    if (!_cycleFinishedPieces.containsKey(stationId)) return;
+
+    if (_cycleFinishedPieces[stationId] == 0) return;
+
+    _cycleFinishedPieces[stationId] = 0;
+    _safeNotifyListeners();
+  }
+
+  // ==========================================================
+  // FIRESTORE
+  // ==========================================================
+
   Future<void> logEvent({
     required String maqueta,
     required String message,
     required String role,
-    required String type, // informatico, ejecucion, terminado, critico
+    required String type,
   }) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final String userName = prefs.getString('userName') ?? 'Usuario Desconocido';
-      
-      await FirebaseFirestore.instance.collection('historial').add({
+      final SharedPreferences prefs =
+          await SharedPreferences.getInstance();
+
+      final String userName =
+          prefs.getString('userName') ?? 'Usuario Desconocido';
+
+      await FirebaseFirestore.instance
+          .collection('historial')
+          .add({
         'timestamp': FieldValue.serverTimestamp(),
         'maqueta': maqueta,
         'message': message,
         'role': role,
-        'userName': userName, // Guardamos el nombre real
+        'userName': userName,
         'type': type,
       });
-    } catch (e) {
-      debugPrint("Error al guardar log: $e");
+    } catch (e, stackTrace) {
+      debugPrint('Error al guardar log: $e');
+      debugPrintStack(stackTrace: stackTrace);
     }
   }
 
-  void startTracking() {
-    _ticker ??= Timer.periodic(const Duration(seconds: 1), (timer) {
-      bool changed = false;
-      _isActive.forEach((station, active) {
-        if (active) {
-          _stationTimes[station] = _stationTimes[station]! + const Duration(seconds: 1);
-          changed = true;
-        }
-      });
-      if (changed) notifyListeners();
-    });
-
-    _consumptionTimer ??= Timer.periodic(const Duration(seconds: 10), (timer) {
-      bool changed = false;
-      _isActive.forEach((station, active) {
-        if (active) {
-          _stationConsumption[station] = _stationConsumption[station]! + 0.05;
-          changed = true;
-        }
-      });
-      if (changed) notifyListeners();
-    });
-  }
-
-  // Setters de estado global
-  void setStationActive(String stationId, bool active) {
-    if (_isActive.containsKey(stationId)) {
-      _isActive[stationId] = active;
-      notifyListeners();
-    }
-  }
-
-  bool isStationActive(String stationId) => _isActive[stationId] ?? false;
-
-  void addProduction(String stationId) {
-    if (_stationProduction.containsKey(stationId)) {
-      _stationProduction[stationId] = _stationProduction[stationId]! + 1;
-      _cycleFinishedPieces[stationId] = _cycleFinishedPieces[stationId]! + 1;
-      notifyListeners();
-      syncStationAuditoria(stationId); // Sincronizar inmediatamente al producir
-    }
-  }
-
-  void addFailure(String stationId) {
-    if (_stationFailures.containsKey(stationId)) {
-      _stationFailures[stationId] = _stationFailures[stationId]! + 1;
-      notifyListeners();
-      syncStationAuditoria(stationId); // Sincronizar inmediatamente al fallar
-    }
-  }
-
-  // NUEVO: Incrementar interacción con componente específico
-  void incrementComponentInteraction(String stationId, String type, String componentId) {
-    if (_componentInteractions.containsKey(stationId)) {
-      final key = "${type}_$componentId"; // Ej: sensor_P1 o actuador_M1
-      _componentInteractions[stationId]![key] = (_componentInteractions[stationId]![key] ?? 0) + 1;
-      notifyListeners();
-      syncStationAuditoria(stationId); // Sincronizar al interactuar manualmente
-    }
-  }
-
-  // NUEVO: Sincronizar datos agregados a Firestore (maquetas > station > auditoria > timestamp)
   Future<void> syncStationAuditoria(String stationId) async {
-    if (!_componentInteractions.containsKey(stationId)) return;
+    final Map<String, int>? interactions =
+        _componentInteractions[stationId];
+
+    if (interactions == null) return;
 
     try {
-      final String timestamp = DateTime.now().toIso8601String().replaceAll(':', '-');
-      
+      final String timestamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(':', '-');
+
       await FirebaseFirestore.instance
           .collection('maquetas')
           .doc(stationId)
           .collection('auditoria')
           .doc(timestamp)
           .set({
-        'componentes': _componentInteractions[stationId],
+        // Se crea una copia para evitar modificar el mapa mientras
+        // Firestore lo está serializando.
+        'componentes': Map<String, int>.from(interactions),
         'parosEmergencia': _stationFailures[stationId] ?? 0,
         'piezasProcesadas': _stationProduction[stationId] ?? 0,
-        'ultimoReset': DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
+        'ultimoReset':
+            DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
+        'timestamp': FieldValue.serverTimestamp(),
       });
-    } catch (e) {
-      debugPrint("Error al sincronizar auditoría de maqueta: $e");
+    } catch (e, stackTrace) {
+      debugPrint(
+        'Error al sincronizar auditoría de $stationId: $e',
+      );
+      debugPrintStack(stackTrace: stackTrace);
     }
   }
 
-  void resetCyclePieces(String stationId) {
-    if (_cycleFinishedPieces.containsKey(stationId)) {
-      _cycleFinishedPieces[stationId] = 0;
-      notifyListeners();
-    }
+  // ==========================================================
+  // UTILIDADES
+  // ==========================================================
+
+  String formatDuration(Duration duration) {
+    String twoDigits(int number) =>
+        number.toString().padLeft(2, '0');
+
+    final String hours = twoDigits(duration.inHours);
+    final String minutes =
+        twoDigits(duration.inMinutes.remainder(60));
+    final String seconds =
+        twoDigits(duration.inSeconds.remainder(60));
+
+    return '$hours:$minutes:$seconds';
   }
 
-  int getCycleFinishedPieces(String stationId) => _cycleFinishedPieces[stationId] ?? 0;
-
-  // Getters para UI
-  Duration getStationTime(String stationId) => _stationTimes[stationId] ?? Duration.zero;
-  int getStationProduction(String stationId) => _stationProduction[stationId] ?? 0;
-  int getStationFailures(String stationId) => _stationFailures[stationId] ?? 0;
-  double getStationConsumption(String stationId) => _stationConsumption[stationId] ?? 0.0;
-
-  // Totales
-  Duration get totalTime => _stationTimes.values.reduce((a, b) => a + b);
-  int get totalProduction => _stationProduction.values.reduce((a, b) => a + b);
-  int get totalFailures => _stationFailures.values.reduce((a, b) => a + b);
-  double get totalConsumption => _stationConsumption.values.reduce((a, b) => a + b);
-
-  String formatDuration(Duration d) {
-    String twoDigits(int n) => n.toString().padLeft(2, "0");
-    String twoDigitMinutes = twoDigits(d.inMinutes.remainder(60));
-    String twoDigitSeconds = twoDigits(d.inSeconds.remainder(60));
-    return "${twoDigits(d.inHours)}:$twoDigitMinutes:$twoDigitSeconds";
-  }
+  // ==========================================================
+  // LIBERACIÓN DE RECURSOS
+  // ==========================================================
 
   @override
   void dispose() {
+    if (_isDisposed) return;
+
+    _isDisposed = true;
+    _trackingStarted = false;
+
     _pendingUsersSub?.cancel();
+    _pendingUsersSub = null;
+
     _ticker?.cancel();
+    _ticker = null;
+
     _consumptionTimer?.cancel();
+    _consumptionTimer = null;
+
     super.dispose();
   }
 }
