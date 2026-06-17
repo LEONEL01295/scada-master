@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SCADA Master — Portal de Descargas | Hitech Ingenium Labs</title>
+
+<!-- ICONO DE LA PÁGINA -->
+<link rel="icon" type="image/png" sizes="32x32" href="gemini-svg.png?v=5">
+<link rel="icon" type="image/png" sizes="192x192" href="gemini-svg.png?v=5">
+<link rel="apple-touch-icon" sizes="180x180" href="gemini-svg.png?v=5">
+<meta name="theme-color" content="#080C14">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -62,19 +68,6 @@ nav{position:sticky;top:0;z-index:100;background:rgba(8,12,20,0.92);backdrop-fil
 .dl-secondary-links{display:flex;gap:12px;margin-top:10px;justify-content:center;}
 .dl-link-sm{font-size:12px;color:var(--text3);text-decoration:none;border-bottom:1px dashed var(--border2);padding-bottom:1px;transition:color .2s;}
 .dl-link-sm:hover{color:var(--text2)}
-
-/* ── CONTADOR DE DESCARGAS ── */
-.download-counter{
-  display:flex;align-items:center;justify-content:center;gap:6px;
-  margin-top:10px;
-  font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text3);
-}
-.download-counter .counter-num{
-  color:var(--green);font-weight:600;
-  transition:all .3s ease;
-}
-.counter-pulse{animation:counterPop .4s ease;}
-@keyframes counterPop{0%{transform:scale(1.4);color:#fff}100%{transform:scale(1);color:var(--green)}}
 
 /* ── TOAST ── */
 .toast{
@@ -245,11 +238,6 @@ footer p{font-size:13px;color:var(--text3)}
         </svg>
         <span id="btn-android-label">Descargar APK</span>
       </a>
-      <div class="download-counter">
-        <span>⬇</span>
-        <span class="counter-num" id="count-android">—</span>
-        <span>descargas</span>
-      </div>
       <div class="dl-secondary-links" style="margin-top:8px">
         <a href="#install" class="dl-link-sm">Guía de instalación</a>
         <a href="#requirements" class="dl-link-sm">Requisitos</a>
@@ -275,11 +263,6 @@ footer p{font-size:13px;color:var(--text3)}
         </svg>
         <span id="btn-windows-label">Cargando...</span>
       </button>
-      <div class="download-counter">
-        <span>⬇</span>
-        <span class="counter-num" id="count-windows">—</span>
-        <span>descargas</span>
-      </div>
       <div class="dl-secondary-links" style="margin-top:8px">
         <a href="#install" class="dl-link-sm">Guía de instalación</a>
         <a href="#requirements" class="dl-link-sm">Requisitos</a>
@@ -460,10 +443,7 @@ footer p{font-size:13px;color:var(--text3)}
      ══════════════════════════════════════════════════════════════ -->
 <script type="module">
   import { initializeApp }         from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-  import { getFirestore,
-           doc, getDoc,
-           setDoc, increment,
-           onSnapshot }            from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
 
 
   // ── 1. CONFIGURACIÓN DE FIREBASE ──────────────────────────
@@ -504,43 +484,13 @@ footer p{font-size:13px;color:var(--text3)}
     }
   }
 
-  // ── 5. CONTADOR EN TIEMPO REAL (FIRESTORE) ───────────────────
-  function listenCounters() {
-    for (const platform of ['android', 'windows']) {
-      const docRef = doc(db, 'downloads', platform);
-      onSnapshot(docRef, (snap) => {
-        const el = document.getElementById(`count-${platform}`);
-        if (snap.exists()) {
-          const n = snap.data().total ?? 0;
-          el.textContent = n.toLocaleString('es-MX');
-        } else {
-          el.textContent = '0';
-        }
-      });
-    }
-  }
-
-  // ── 6. MANEJAR DESCARGA + INCREMENTAR CONTADOR ───────────────
+  // ── 5. MANEJAR DESCARGA ───────────────────────────────────
   window.handleDownload = async function(platform) {
     const url = downloadURLs[platform];
     if (!url) return;
 
-    // Incrementar contador en Firestore
-    try {
-      const docRef = doc(db, 'downloads', platform);
-      await setDoc(docRef, { total: increment(1) }, { merge: true });
-    } catch (err) {
-      console.error('Error al incrementar contador:', err);
-    }
-
     // Registrar descarga detallada
     await registrarDescarga(platform);
-
-    // Animar el número
-    const el = document.getElementById(`count-${platform}`);
-    el.classList.remove('counter-pulse');
-    void el.offsetWidth; // reflow
-    el.classList.add('counter-pulse');
 
     // Mostrar toast
     showToast(
@@ -561,7 +511,7 @@ footer p{font-size:13px;color:var(--text3)}
     setTimeout(() => document.body.removeChild(a), 200);
   };
 
-  // ── 7. TOAST ─────────────────────────────────────────────────
+  // ── 6. TOAST ─────────────────────────────────────────────────
   function showToast(icon, msg) {
     const toast = document.getElementById('toast');
     document.getElementById('toastIcon').textContent = icon;
@@ -570,7 +520,7 @@ footer p{font-size:13px;color:var(--text3)}
     setTimeout(() => toast.classList.remove('show'), 3500);
   }
 
-  // ── 8. REGISTRAR VISITA EN FIRESTORE ─────────────────────────
+  // ── 7. REGISTRAR VISITA EN FIRESTORE ─────────────────────────
   async function registrarVisita() {
     try {
       const visita = {
@@ -587,7 +537,7 @@ footer p{font-size:13px;color:var(--text3)}
     } catch(e) { console.warn('Visita no registrada:', e); }
   }
 
-  // ── 9. REGISTRAR DESCARGA DETALLADA ──────────────────────────
+  // ── 8. REGISTRAR DESCARGA DETALLADA ──────────────────────────
   async function registrarDescarga(platform) {
     try {
       const descarga = {
@@ -605,7 +555,6 @@ footer p{font-size:13px;color:var(--text3)}
 
   // ── INICIAR ──────────────────────────────────────────────────
   loadDownloadURLs();
-  listenCounters();
   registrarVisita();
 </script>
 

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -116,6 +117,12 @@ class _ChatScreenState extends State<ChatScreen> {
   _Metricas? _metricas;
 
   String _motorActivo = 'Modo automático';
+
+  // Identifica la sesión actual del chatbot.
+  final String _sessionId =
+      DateTime.now().microsecondsSinceEpoch.toString();
+
+  int _numeroConsulta = 0;
 
   // ==========================================================
   // CICLO DE VIDA
@@ -1148,6 +1155,126 @@ Distingue claramente entre valores reales y valores estimados.
         'Flutter y otros conceptos técnicos.';
   }
 
+
+  // ==========================================================
+  // HISTORIAL DEL CHAT EN FIRESTORE
+  // ==========================================================
+
+  Map<String, dynamic> _crearResumenMetricas() {
+    final _Metricas? metricas = _metricas;
+
+    if (metricas == null) {
+      return <String, dynamic>{
+        'disponibles': false,
+      };
+    }
+
+    return <String, dynamic>{
+      'disponibles': true,
+      'piezas': _obtenerTotalPiezas(metricas),
+      'alarmas': metricas.totalAlarmas,
+      'eventos': metricas.totalLogs,
+      'oeeEstimado': _calcularOeeEstimado(metricas),
+      'tasaFallas': _calcularTasaFallas(metricas),
+    };
+  }
+
+  Future<DocumentReference<Map<String, dynamic>>?> _registrarPregunta(
+    String pregunta,
+  ) async {
+    try {
+      final User? usuario = FirebaseAuth.instance.currentUser;
+      final DocumentReference<Map<String, dynamic>> registro =
+          FirebaseFirestore.instance
+              .collection('chatbot_consultas')
+              .doc();
+
+      _numeroConsulta++;
+
+      await registro.set({
+        'registroId': registro.id,
+        'sesionId': _sessionId,
+        'numeroConsulta': _numeroConsulta,
+        'pregunta': pregunta,
+        'respuesta': '',
+        'motor': 'Pendiente',
+        'estado': 'procesando',
+        'usuarioId': usuario?.uid,
+        'usuarioCorreo': usuario?.email,
+        'usuarioNombre': usuario?.displayName,
+        'fechaCreacion': FieldValue.serverTimestamp(),
+        'fechaCreacionLocal': DateTime.now().toIso8601String(),
+        'aplicacion': 'SCADA Master',
+        'metricasAlPreguntar': _crearResumenMetricas(),
+      });
+
+      debugPrint(
+        'Consulta guardada en Firebase: ${registro.id}',
+      );
+
+      return registro;
+    } catch (e) {
+      // El chatbot continúa funcionando aunque Firestore no permita
+      // guardar el historial o no exista conexión.
+      debugPrint(
+        'No se pudo guardar la pregunta en Firebase: $e',
+      );
+      return null;
+    }
+  }
+
+  Future<void> _finalizarRegistroChat({
+    required DocumentReference<Map<String, dynamic>>? registro,
+    required String respuesta,
+    required String motor,
+    required List<String> erroresProveedores,
+    String estado = 'completado',
+  }) async {
+    if (registro == null) return;
+
+    try {
+      await registro.update({
+        'respuesta': respuesta,
+        'motor': motor,
+        'estado': estado,
+        'erroresProveedores': erroresProveedores,
+        'fechaRespuesta': FieldValue.serverTimestamp(),
+        'fechaRespuestaLocal': DateTime.now().toIso8601String(),
+        'metricasAlResponder': _crearResumenMetricas(),
+      });
+
+      debugPrint(
+        'Respuesta guardada en Firebase: ${registro.id}',
+      );
+    } catch (e) {
+      debugPrint(
+        'No se pudo guardar la respuesta en Firebase: $e',
+      );
+    }
+  }
+
+  Future<void> _mostrarYGuardarRespuesta({
+    required DocumentReference<Map<String, dynamic>>? registro,
+    required String respuesta,
+    required String motor,
+    required List<String> erroresProveedores,
+  }) async {
+    if (!mounted) return;
+
+    setState(() {
+      _motorActivo = motor;
+    });
+
+    _addBotMessage(respuesta);
+
+    await _finalizarRegistroChat(
+      registro: registro,
+      respuesta: respuesta,
+      motor: motor,
+      erroresProveedores: erroresProveedores,
+    );
+  }
+
   // ==========================================================
   // ENVÍO DE MENSAJES
   // ==========================================================
@@ -1190,19 +1317,12 @@ Distingue claramente entre valores reales y valores estimados.
 
     _scrollToBottom();
 
-    // Evita almacenar la pregunta completa si puede
-    // contener información sensible.
-    // try {
-    //   FirebaseService.registrarLog(
-    //     modulo: 'chatbot',
-    //     evento: 'Consulta enviada al asistente inteligente',
-    //     tipo: 'info',
-    //   );
-    // } catch (e) {
-    //   debugPrint(
-    //     'No se pudo registrar el log: $e',
-    //   );
-    // }
+    // La pregunta se guarda inmediatamente. Después, el mismo
+    // documento se actualiza con la respuesta y el motor utilizado.
+    final DocumentReference<Map<String, dynamic>>? registro =
+        await _registrarPregunta(text);
+
+    final List<String> erroresProveedores = <String>[];
 
     try {
       // ------------------------------------------------------
@@ -1213,15 +1333,16 @@ Distingue claramente entre valores reales y valores estimados.
         try {
           final String response = await _sendToGroq(text);
 
-          if (!mounted) return;
-
-          setState(() {
-            _motorActivo = 'Groq AI';
-          });
-
-          _addBotMessage(response);
+          await _mostrarYGuardarRespuesta(
+            registro: registro,
+            respuesta: response,
+            motor: 'Groq AI',
+            erroresProveedores: erroresProveedores,
+          );
           return;
         } catch (e) {
+          final String errorGroq = 'Groq: $e';
+          erroresProveedores.add(errorGroq);
           debugPrint('Groq no disponible: $e');
 
           if (e.toString().contains('401') ||
@@ -1234,6 +1355,10 @@ Distingue claramente entre valores reales y valores estimados.
           }
         }
       } else {
+        erroresProveedores.add(
+          'Groq: GROQ_API_KEY no configurada.',
+        );
+
         debugPrint(
           'Groq omitido porque GROQ_API_KEY '
           'no está configurada.',
@@ -1250,16 +1375,21 @@ Distingue claramente entre valores reales y valores estimados.
         if (ollamaDisponible) {
           final String response = await _sendToOllama(text);
 
-          if (!mounted) return;
-
-          setState(() {
-            _motorActivo = 'Ollama local';
-          });
-
-          _addBotMessage(response);
+          await _mostrarYGuardarRespuesta(
+            registro: registro,
+            respuesta: response,
+            motor: 'Ollama local',
+            erroresProveedores: erroresProveedores,
+          );
           return;
         }
+
+        erroresProveedores.add(
+          'Ollama: servicio local no disponible.',
+        );
       } catch (e) {
+        erroresProveedores.add('Ollama: $e');
+
         debugPrint(
           'Ollama no disponible: $e',
         );
@@ -1269,29 +1399,29 @@ Distingue claramente entre valores reales y valores estimados.
       // MOTOR 3: RESPUESTA INTERNA
       // ------------------------------------------------------
 
-      if (!mounted) return;
+      final String respuestaInterna = _offlineReply(text);
 
-      setState(() {
-        _motorActivo = 'Modo interno';
-      });
-
-      _addBotMessage(
-        _offlineReply(text),
+      await _mostrarYGuardarRespuesta(
+        registro: registro,
+        respuesta: respuestaInterna,
+        motor: 'Modo interno',
+        erroresProveedores: erroresProveedores,
       );
     } catch (e) {
       debugPrint(
         'Error general del chatbot: $e',
       );
 
-      if (mounted) {
-        setState(() {
-          _motorActivo = 'Modo interno';
-        });
+      erroresProveedores.add('Error general: $e');
 
-        _addBotMessage(
-          _offlineReply(text),
-        );
-      }
+      final String respuestaInterna = _offlineReply(text);
+
+      await _mostrarYGuardarRespuesta(
+        registro: registro,
+        respuesta: respuestaInterna,
+        motor: 'Modo interno',
+        erroresProveedores: erroresProveedores,
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -1300,6 +1430,7 @@ Distingue claramente entre valores reales y valores estimados.
       }
     }
   }
+
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback(
