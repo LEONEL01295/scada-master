@@ -71,6 +71,253 @@ class _FadeInSlideState extends State<FadeInSlide>
   }
 }
 
+// ================= ANIMACIÓN DE APERTURA =================
+//
+// Esta pantalla se muestra brevemente al abrir la aplicación.
+// Funciona en Android y Windows sin paquetes adicionales.
+class _LoginOpeningAnimation extends StatefulWidget {
+  const _LoginOpeningAnimation({super.key});
+
+  @override
+  State<_LoginOpeningAnimation> createState() => _LoginOpeningAnimationState();
+}
+
+class _LoginOpeningAnimationState extends State<_LoginOpeningAnimation>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _logoScale;
+  late final Animation<double> _logoOpacity;
+  late final Animation<double> _ringRotation;
+  late final Animation<double> _textOpacity;
+  late final Animation<double> _progress;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2100),
+    );
+
+    _logoScale = Tween<double>(
+      begin: 0.55,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(
+          0.00,
+          0.48,
+          curve: Curves.elasticOut,
+        ),
+      ),
+    );
+
+    _logoOpacity = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(
+          0.00,
+          0.25,
+          curve: Curves.easeOut,
+        ),
+      ),
+    );
+
+    _ringRotation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: Curves.easeInOutCubic,
+      ),
+    );
+
+    _textOpacity = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(
+          0.35,
+          0.72,
+          curve: Curves.easeOut,
+        ),
+      ),
+    );
+
+    _progress = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(
+          0.45,
+          1.00,
+          curve: Curves.easeInOut,
+        ),
+      ),
+    );
+
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool compact = MediaQuery.sizeOf(context).width < 600;
+
+    return Center(
+      key: const ValueKey<String>('login-opening-animation'),
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (BuildContext context, Widget? child) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  RotationTransition(
+                    turns: _ringRotation,
+                    child: Container(
+                      width: compact ? 138 : 168,
+                      height: compact ? 138 : 168,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.blueAccent.withValues(alpha: 0.45),
+                          width: 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.blueAccent.withValues(alpha: 0.20),
+                            blurRadius: 35,
+                            spreadRadius: 5,
+                          ),
+                        ],
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.all(9),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.blueAccent,
+                          backgroundColor: Colors.white10,
+                        ),
+                      ),
+                    ),
+                  ),
+                  FadeTransition(
+                    opacity: _logoOpacity,
+                    child: ScaleTransition(
+                      scale: _logoScale,
+                      child: Container(
+                        width: compact ? 96 : 116,
+                        height: compact ? 96 : 116,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF111B2C),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.blueAccent.withValues(alpha: 0.55),
+                          ),
+                        ),
+                        child: Image.asset(
+                          'assets/logo.png',
+                          fit: BoxFit.contain,
+                          errorBuilder: (
+                            BuildContext context,
+                            Object error,
+                            StackTrace? stackTrace,
+                          ) {
+                            return const Icon(
+                              Icons.precision_manufacturing_rounded,
+                              color: Colors.blueAccent,
+                              size: 62,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 28),
+              FadeTransition(
+                opacity: _textOpacity,
+                child: const Column(
+                  children: [
+                    Text(
+                      'SCADA MASTER',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 29,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 3,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 7),
+                    Text(
+                      'Hitech Ingenium · Industrial Control',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        letterSpacing: 1.2,
+                        color: Colors.white60,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 30),
+              SizedBox(
+                width: compact ? 210 : 260,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: LinearProgressIndicator(
+                    value: _progress.value,
+                    minHeight: 5,
+                    backgroundColor: Colors.white12,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.blueAccent,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              FadeTransition(
+                opacity: _textOpacity,
+                child: const Text(
+                  'INICIALIZANDO SISTEMA...',
+                  style: TextStyle(
+                    color: Colors.white38,
+                    fontSize: 10,
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 // ================= LOGIN =================
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -83,6 +330,9 @@ class _LoginScreenState extends State<LoginScreen> {
   bool rememberMe = false;
   bool obscure = true;
   bool _isLoading = false;
+  bool _showLoginForm = false;
+
+  Timer? _openingTimer;
 
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
@@ -123,12 +373,26 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+
     emailController.addListener(_validateEmail);
     passwordController.addListener(_validatePassword);
+
+    // Muestra la animación inicial y después presenta el formulario.
+    _openingTimer = Timer(
+      const Duration(milliseconds: 2250),
+      () {
+        if (!mounted) return;
+
+        setState(() {
+          _showLoginForm = true;
+        });
+      },
+    );
   }
 
   @override
   void dispose() {
+    _openingTimer?.cancel();
     emailController.removeListener(_validateEmail);
     passwordController.removeListener(_validatePassword);
     emailController.dispose();
@@ -138,10 +402,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _validateEmail() {
     setState(() {
-      emailError = (emailController.text.isEmpty ||
-              emailController.text.contains('@'))
-          ? null
-          : 'Correo inválido';
+      emailError =
+          (emailController.text.isEmpty || emailController.text.contains('@'))
+              ? null
+              : 'Correo inválido';
     });
   }
 
@@ -154,14 +418,17 @@ class _LoginScreenState extends State<LoginScreen> {
   void submitLogin() async {
     _validateEmail();
     _validatePassword();
-    if (emailError != null || passwordError != null || emailController.text.isEmpty || passwordController.text.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Por favor, rellene todos los campos correctamente.'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-        return;
+    if (emailError != null ||
+        passwordError != null ||
+        emailController.text.isEmpty ||
+        passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Por favor, rellene todos los campos correctamente.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
     }
 
     setState(() => _isLoading = true);
@@ -196,14 +463,15 @@ class _LoginScreenState extends State<LoginScreen> {
           await prefs.setString('userEmail', emailController.text);
           await prefs.setString('userName', userData['nombre'] ?? '');
           await prefs.setString('userRole', rol);
-          await prefs.setBool('showWelcome', rol != 'Pendiente'); 
+          await prefs.setBool('showWelcome', rol != 'Pendiente');
 
           if (!mounted) return;
 
           // REDIRECCIÓN SEGÚN ROL Y PERFIL
           if (rol == 'Pendiente') {
             Navigator.pushReplacementNamed(context, '/espera');
-          } else if (rol == 'Alumno' && !(userData['perfilCompleto'] ?? false)) {
+          } else if (rol == 'Alumno' &&
+              !(userData['perfilCompleto'] ?? false)) {
             Navigator.pushReplacementNamed(context, '/formulario');
           } else if (!(userData['encuestaCompletada'] ?? false)) {
             Navigator.pushReplacementNamed(context, '/encuesta');
@@ -233,120 +501,112 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return BackgroundWrapper(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(25),
-            child: Container(
-              width: 430,
-              padding: const EdgeInsets.all(28),
-              decoration: BoxDecoration(
-                color: Colors.white10,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: Colors.blueAccent.withValues(alpha: .3)),
+  Widget _buildLoginForm() {
+    return Center(
+      key: const ValueKey<String>('login-form'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(25),
+        child: Container(
+          width: 430,
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            color: Colors.white10,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: Colors.blueAccent.withValues(alpha: .3)),
+          ),
+          child: Column(
+            children: [
+              const FadeInSlide(
+                child: Icon(Icons.precision_manufacturing,
+                    size: 80, color: Colors.blueAccent),
               ),
-              child: Column(
-                children: [
-                  const FadeInSlide(
-                    child: Icon(Icons.precision_manufacturing,
-                        size: 80, color: Colors.blueAccent),
+              const SizedBox(height: 15),
+              const FadeInSlide(
+                delay: Duration(milliseconds: 100),
+                child: Text(
+                  'INDUSTRIAL CONTROL',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 2,
                   ),
-                  const SizedBox(height: 15),
-                  const FadeInSlide(
-                    delay: Duration(milliseconds: 100),
-                    child: Text(
-                      'INDUSTRIAL CONTROL',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 30),
-                  FadeInSlide(
-                    delay: const Duration(milliseconds: 200),
-                    child: TextField(
-                      controller: emailController,
-                      decoration: inputDecoration(
-                              'Correo o usuario', Icons.person_outline)
+                ),
+              ),
+              const SizedBox(height: 30),
+              FadeInSlide(
+                delay: const Duration(milliseconds: 200),
+                child: TextField(
+                  controller: emailController,
+                  decoration:
+                      inputDecoration('Correo o usuario', Icons.person_outline)
                           .copyWith(
-                        errorText: emailError,
-                        errorStyle: const TextStyle(color: Colors.orangeAccent),
-                        focusedErrorBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide:
-                              const BorderSide(color: Colors.orangeAccent),
+                    errorText: emailError,
+                    errorStyle: const TextStyle(color: Colors.orangeAccent),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: Colors.orangeAccent),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15),
+              FadeInSlide(
+                delay: const Duration(milliseconds: 300),
+                child: TextField(
+                  controller: passwordController,
+                  obscureText: obscure,
+                  decoration: inputDecoration('Contraseña', Icons.lock_outline)
+                      .copyWith(
+                    errorText: passwordError,
+                    errorStyle: const TextStyle(color: Colors.orangeAccent),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: Colors.orangeAccent),
+                    ),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                          obscure ? Icons.visibility_off : Icons.visibility),
+                      onPressed: () => setState(() => obscure = !obscure),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              FadeInSlide(
+                delay: const Duration(milliseconds: 400),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: rememberMe,
+                      onChanged: (v) => setState(() => rememberMe = v!),
+                    ),
+                    const Text('Recordar sesión'),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ForgotPasswordScreen(),
                         ),
                       ),
+                      child: const Text('¿Olvidaste tu contraseña?'),
                     ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              FadeInSlide(
+                delay: const Duration(milliseconds: 500),
+                child: ElevatedButton(
+                  onPressed: submitLogin,
+                  style: buttonStyle(),
+                  child: const SizedBox(
+                    width: double.infinity,
+                    child: Center(child: Text('Entrar')),
                   ),
-                  const SizedBox(height: 15),
-                  FadeInSlide(
-                    delay: const Duration(milliseconds: 300),
-                    child: TextField(
-                      controller: passwordController,
-                      obscureText: obscure,
-                      decoration:
-                          inputDecoration('Contraseña', Icons.lock_outline)
-                              .copyWith(
-                        errorText: passwordError,
-                        errorStyle:
-                            const TextStyle(color: Colors.orangeAccent),
-                        focusedErrorBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide:
-                              const BorderSide(color: Colors.orangeAccent),
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(obscure
-                              ? Icons.visibility_off
-                              : Icons.visibility),
-                          onPressed: () => setState(() => obscure = !obscure),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  FadeInSlide(
-                    delay: const Duration(milliseconds: 400),
-                    child: Row(
-                      children: [
-                        Checkbox(
-                          value: rememberMe,
-                          onChanged: (v) => setState(() => rememberMe = v!),
-                        ),
-                        const Text('Recordar sesión'),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const ForgotPasswordScreen(),
-                            ),
-                          ),
-                          child: const Text('¿Olvidaste tu contraseña?'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  FadeInSlide(
-                    delay: const Duration(milliseconds: 500),
-                    child: ElevatedButton(
-                      onPressed: submitLogin,
-                      style: buttonStyle(),
-                      child: const SizedBox(
-                        width: double.infinity,
-                        child: Center(child: Text('Entrar')),
-                      ),
-                    ),
-                  ),
-                  /*
+                ),
+              ),
+              /*
                   const SizedBox(height: 20),
                   FadeInSlide(
                     delay: const Duration(milliseconds: 600),
@@ -375,29 +635,67 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   */
-                  const SizedBox(height: 20),
-                  FadeInSlide(
-                    delay: const Duration(milliseconds: 800),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text('¿No tienes cuenta? '),
-                        TextButton(
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const RegisterScreen(),
-                            ),
-                          ),
-                          child: const Text('Crear cuenta'),
+              const SizedBox(height: 20),
+              FadeInSlide(
+                delay: const Duration(milliseconds: 800),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text('¿No tienes cuenta? '),
+                    TextButton(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const RegisterScreen(),
                         ),
-                      ],
+                      ),
+                      child: const Text('Crear cuenta'),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BackgroundWrapper(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 700),
+          reverseDuration: const Duration(milliseconds: 450),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (
+            Widget child,
+            Animation<double> animation,
+          ) {
+            final Animation<double> scale = Tween<double>(
+              begin: 0.96,
+              end: 1.0,
+            ).animate(
+              CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOutCubic,
+              ),
+            );
+
+            return FadeTransition(
+              opacity: animation,
+              child: ScaleTransition(
+                scale: scale,
+                child: child,
+              ),
+            );
+          },
+          child: _showLoginForm
+              ? _buildLoginForm()
+              : const _LoginOpeningAnimation(),
         ),
       ),
     );
@@ -497,11 +795,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   void _validatePassword() {
     setState(() {
-      _confirmPasswordError =
-          (_confirmPasswordController.text.isNotEmpty &&
-                  _passwordController.text != _confirmPasswordController.text)
-              ? 'Las contraseñas no coinciden'
-              : null;
+      _confirmPasswordError = (_confirmPasswordController.text.isNotEmpty &&
+              _passwordController.text != _confirmPasswordController.text)
+          ? 'Las contraseñas no coinciden'
+          : null;
     });
   }
 
@@ -542,7 +839,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!_emailController.text.endsWith('@huetamo.tecnm.mx')) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No está permitido el registro con el correo ingresado.'),
+          content:
+              Text('No está permitido el registro con el correo ingresado.'),
           backgroundColor: Colors.orangeAccent,
         ),
       );
@@ -555,7 +853,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       String? localPath;
       if (_profileImageBytes != null) {
         final directory = await getApplicationDocumentsDirectory();
-        final String emailSanitized = _emailController.text.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+        final String emailSanitized =
+            _emailController.text.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
         final String fileName = 'profile_$emailSanitized.png';
         final File file = File(p.join(directory.path, fileName));
         await file.writeAsBytes(_profileImageBytes!);
@@ -566,28 +865,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await FirebaseFirestore.instance.collection('usuarios').add({
         'activo': true,
         'correo': _emailController.text,
-        'fechaRegistro': DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
+        'fechaRegistro':
+            DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
         'nombre': _nombreController.text,
         'numero': _telefonoController.text,
-        'passwordHash': _passwordController.text, 
-        'rol': 'Pendiente', 
+        'passwordHash': _passwordController.text,
+        'rol': 'Pendiente',
         'perfilCompleto': false, // Nueva bandera
-        'ultimoAcceso': DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
+        'ultimoAcceso':
+            DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
       });
 
       if (localPath != null) {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('profileImagePath_\${_emailController.text}', localPath);
+        await prefs.setString(
+            'profileImagePath_\${_emailController.text}', localPath);
       }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Cuenta creada. En espera de aprobación del administrador.'),
+          content:
+              Text('Cuenta creada. En espera de aprobación del administrador.'),
           backgroundColor: Colors.blueAccent,
         ),
       );
-      
+
       // Redirigir a pantalla de espera
       Navigator.pushReplacementNamed(context, '/espera');
     } catch (e) {
@@ -609,7 +912,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF101725),
         title: const Text('Términos y Condiciones de Uso - SCADA MASTER',
-            style: TextStyle(color: Colors.blueAccent, fontSize: 18, fontWeight: FontWeight.bold)),
+            style: TextStyle(
+                color: Colors.blueAccent,
+                fontSize: 18,
+                fontWeight: FontWeight.bold)),
         content: const SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -679,7 +985,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Entendido', style: TextStyle(color: Colors.blueAccent)),
+            child: const Text('Entendido',
+                style: TextStyle(color: Colors.blueAccent)),
           ),
         ],
       ),
@@ -715,7 +1022,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           FadeInSlide(
             delay: const Duration(milliseconds: 400),
             child: TextField(
-              controller: _telefonoController, 
+              controller: _telefonoController,
               inputFormatters: [
                 FilteringTextInputFormatter.digitsOnly,
                 LengthLimitingTextInputFormatter(10),
@@ -740,8 +1047,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
               obscureText: _obscurePassword,
               decoration: inputDecoration('Contraseña', Icons.lock).copyWith(
                 suffixIcon: IconButton(
-                  icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                  icon: Icon(_obscurePassword
+                      ? Icons.visibility_off
+                      : Icons.visibility),
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
                 ),
               ),
             ),
@@ -749,7 +1059,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           const SizedBox(height: 10),
           FadeInSlide(
             delay: const Duration(milliseconds: 700),
-            child: PasswordStrengthIndicator(password: _passwordController.text),
+            child:
+                PasswordStrengthIndicator(password: _passwordController.text),
           ),
           const SizedBox(height: 15),
           FadeInSlide(
@@ -757,8 +1068,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: TextField(
               controller: _confirmPasswordController,
               obscureText: _obscureConfirmPassword,
-              decoration: inputDecoration('Confirmar contraseña', Icons.lock)
-                  .copyWith(
+              decoration:
+                  inputDecoration('Confirmar contraseña', Icons.lock).copyWith(
                 errorText: _confirmPasswordError,
                 errorStyle: const TextStyle(color: Colors.orangeAccent),
                 focusedErrorBorder: OutlineInputBorder(
@@ -766,14 +1077,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   borderSide: const BorderSide(color: Colors.orangeAccent),
                 ),
                 suffixIcon: IconButton(
-                  icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                  icon: Icon(_obscureConfirmPassword
+                      ? Icons.visibility_off
+                      : Icons.visibility),
+                  onPressed: () => setState(
+                      () => _obscureConfirmPassword = !_obscureConfirmPassword),
                 ),
               ),
             ),
           ),
           const SizedBox(height: 15),
-           FadeInSlide(
+          FadeInSlide(
             delay: const Duration(milliseconds: 900),
             child: Row(
               children: [
@@ -819,14 +1133,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
           FadeInSlide(
             delay: const Duration(milliseconds: 1100),
             child: ElevatedButton(
-              onPressed: (acceptedTerms && !_isLoading) ? _registrarUsuario : null,
+              onPressed:
+                  (acceptedTerms && !_isLoading) ? _registrarUsuario : null,
               style: buttonStyle(),
               child: SizedBox(
                 width: double.infinity,
                 child: Center(
-                  child: _isLoading 
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text('Crear cuenta'),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2))
+                      : const Text('Crear cuenta'),
                 ),
               ),
             ),
@@ -1040,7 +1359,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
                   ),
                 ),
                 if (!_canResend)
-                  Text(': $_start s', style: const TextStyle(color: Colors.grey)),
+                  Text(': $_start s',
+                      style: const TextStyle(color: Colors.grey)),
               ],
             ),
           ),
@@ -1060,7 +1380,8 @@ class _VerificationScreenState extends State<VerificationScreen> {
                 ElevatedButton(
                   onPressed: () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const ResetPasswordScreen()),
+                    MaterialPageRoute(
+                        builder: (_) => const ResetPasswordScreen()),
                   ),
                   style: buttonStyle(),
                   child: const Text('Verificar'),
@@ -1088,10 +1409,8 @@ class _PinputSimulationState extends State<PinputSimulation> {
 
   @override
   void dispose() {
-    for (final c in _controllers)
-      c.dispose();
-    for (final n in _focusNodes)
-      n.dispose();
+    for (final c in _controllers) c.dispose();
+    for (final n in _focusNodes) n.dispose();
     super.dispose();
   }
 
@@ -1161,11 +1480,10 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
 
   void _validatePassword() {
     setState(() {
-      _confirmPasswordError =
-          (_confirmPasswordController.text.isNotEmpty &&
-                  _passwordController.text != _confirmPasswordController.text)
-              ? 'Las contraseñas no coinciden'
-              : null;
+      _confirmPasswordError = (_confirmPasswordController.text.isNotEmpty &&
+              _passwordController.text != _confirmPasswordController.text)
+          ? 'Las contraseñas no coinciden'
+          : null;
     });
   }
 
@@ -1186,7 +1504,8 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
           const SizedBox(height: 10),
           FadeInSlide(
             delay: const Duration(milliseconds: 100),
-            child: PasswordStrengthIndicator(password: _passwordController.text),
+            child:
+                PasswordStrengthIndicator(password: _passwordController.text),
           ),
           const SizedBox(height: 15),
           FadeInSlide(
@@ -1194,8 +1513,8 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
             child: TextField(
               controller: _confirmPasswordController,
               obscureText: true,
-              decoration: inputDecoration('Confirmar contraseña', Icons.lock)
-                  .copyWith(
+              decoration:
+                  inputDecoration('Confirmar contraseña', Icons.lock).copyWith(
                 errorText: _confirmPasswordError,
                 errorStyle: const TextStyle(color: Colors.orangeAccent),
                 focusedErrorBorder: OutlineInputBorder(
@@ -1219,7 +1538,8 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                   child: const Text('Atrás'),
                 ),
                 ElevatedButton(
-                  onPressed: () => Navigator.popUntil(context, (r) => r.isFirst),
+                  onPressed: () =>
+                      Navigator.popUntil(context, (r) => r.isFirst),
                   style: buttonStyle(),
                   child: const Text('Restablecer'),
                 ),
@@ -1303,8 +1623,8 @@ class AuthScaffold extends StatelessWidget {
                             value: progress! / 3,
                             minHeight: 8,
                             backgroundColor: Colors.white12,
-                            valueColor: const AlwaysStoppedAnimation(
-                                Colors.blueAccent),
+                            valueColor:
+                                const AlwaysStoppedAnimation(Colors.blueAccent),
                           ),
                           const SizedBox(height: 8),
                           Text('Paso $progress de 3'),

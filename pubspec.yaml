@@ -1,8 +1,8 @@
-name: analytics_dashboard
+﻿name: analytics_dashboard
 description: Analytics Reportes Dashboard independiente
 publish_to: 'none'
 
-version: 1.0.1+6
+version: 1.0.2+7
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

@@ -73,6 +73,7 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
   String? _userName;
   String _userRol = 'Alumno';
   bool _showWelcome = false;
+  bool _isLoggingOut = false;
 
   @override
   void initState() {
@@ -134,11 +135,100 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
     super.dispose();
   }
 
-  Future<void> _logout() async {
-    await _setUserOnlineStatus(false);
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> _clearLocalSession() async {
+    final SharedPreferences prefs =
+        await SharedPreferences.getInstance();
+
     await prefs.setBool('isLoggedIn', false);
-    if (mounted) Navigator.pushReplacementNamed(context, '/login');
+    await prefs.remove('userEmail');
+    await prefs.remove('userName');
+    await prefs.remove('userRole');
+    await prefs.remove('showWelcome');
+  }
+
+  Future<void> _logout() async {
+    if (_isLoggingOut || !mounted) return;
+
+    setState(() {
+      _isLoggingOut = true;
+    });
+
+    final Future<void> dialogFuture = showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: 'Cerrando sesión',
+      barrierColor: Colors.black.withValues(alpha: 0.86),
+      transitionDuration: const Duration(milliseconds: 350),
+      pageBuilder: (
+        BuildContext dialogContext,
+        Animation<double> animation,
+        Animation<double> secondaryAnimation,
+      ) {
+        return const _LogoutAnimationOverlay();
+      },
+      transitionBuilder: (
+        BuildContext dialogContext,
+        Animation<double> animation,
+        Animation<double> secondaryAnimation,
+        Widget child,
+      ) {
+        final Animation<double> curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutBack,
+          reverseCurve: Curves.easeIn,
+        );
+
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: Tween<double>(
+              begin: 0.82,
+              end: 1.0,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    );
+
+    final Future<void> minimumAnimationTime =
+        Future<void>.delayed(
+      const Duration(milliseconds: 2400),
+    );
+
+    try {
+      await Future.wait<void>([
+        _setUserOnlineStatus(false).timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            debugPrint(
+              'Tiempo agotado al actualizar el estado en línea.',
+            );
+          },
+        ),
+        _clearLocalSession(),
+      ]);
+    } catch (e) {
+      debugPrint('Error al cerrar la sesión: $e');
+    }
+
+    await minimumAnimationTime;
+
+    if (!mounted) return;
+
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).pop();
+
+    await dialogFuture;
+
+    if (!mounted) return;
+
+    Navigator.of(context).pushNamedAndRemoveUntil(
+      '/login',
+      (Route<dynamic> route) => false,
+    );
   }
 
   @override
@@ -343,22 +433,50 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
     );
   }
 
-  Widget _logoutTile(bool compact) => InkWell(
-        onTap: _logout,
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-              horizontal: compact ? 12 : 20, vertical: compact ? 10 : 13),
-          child: Row(children: [
-            Icon(Icons.logout, color: kRed, size: compact ? 18 : 20),
-            const SizedBox(width: 8),
-            Flexible(
-                child: Text('Cerrar Sesión',
+  Widget _logoutTile(bool compact) => AnimatedOpacity(
+        duration: const Duration(milliseconds: 180),
+        opacity: _isLoggingOut ? 0.55 : 1.0,
+        child: InkWell(
+          onTap: _isLoggingOut ? null : _logout,
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 12 : 20,
+              vertical: compact ? 10 : 13,
+            ),
+            child: Row(
+              children: [
+                if (_isLoggingOut)
+                  SizedBox(
+                    width: compact ? 18 : 20,
+                    height: compact ? 18 : 20,
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: kRed,
+                    ),
+                  )
+                else
+                  Icon(
+                    Icons.logout_rounded,
+                    color: kRed,
+                    size: compact ? 18 : 20,
+                  ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    _isLoggingOut
+                        ? 'Cerrando sesión...'
+                        : 'Cerrar Sesión',
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        color: kRed,
-                        fontWeight: FontWeight.bold,
-                        fontSize: compact ? 11 : 13))),
-          ]),
+                      color: kRed,
+                      fontWeight: FontWeight.bold,
+                      fontSize: compact ? 11 : 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       );
 
@@ -393,6 +511,267 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
       case AppView.chatbot:
         return const ChatScreen();
     }
+  }
+}
+
+
+class _LogoutAnimationOverlay extends StatefulWidget {
+  const _LogoutAnimationOverlay();
+
+  @override
+  State<_LogoutAnimationOverlay> createState() =>
+      _LogoutAnimationOverlayState();
+}
+
+class _LogoutAnimationOverlayState
+    extends State<_LogoutAnimationOverlay>
+    with TickerProviderStateMixin {
+  late final AnimationController _entryController;
+  late final AnimationController _rotationController;
+  late final Animation<double> _fadeAnimation;
+  late final Animation<double> _scaleAnimation;
+  late final Animation<Offset> _slideAnimation;
+  late final Animation<double> _rotationAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _entryController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+
+    _rotationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1300),
+    );
+
+    _fadeAnimation = CurvedAnimation(
+      parent: _entryController,
+      curve: Curves.easeOut,
+    );
+
+    _scaleAnimation = Tween<double>(
+      begin: 0.68,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _entryController,
+        curve: Curves.elasticOut,
+      ),
+    );
+
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.20),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _entryController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+
+    _rotationAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(_rotationController);
+
+    _entryController.forward();
+    _rotationController.repeat();
+  }
+
+  @override
+  void dispose() {
+    _entryController.dispose();
+    _rotationController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final double screenWidth =
+        MediaQuery.sizeOf(context).width;
+
+    final double cardWidth = screenWidth < 430
+        ? screenWidth - 40
+        : 360;
+
+    return Material(
+      color: Colors.transparent,
+      child: Center(
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: SlideTransition(
+            position: _slideAnimation,
+            child: ScaleTransition(
+              scale: _scaleAnimation,
+              child: Container(
+                width: cardWidth,
+                margin: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                ),
+                padding: const EdgeInsets.fromLTRB(
+                  30,
+                  32,
+                  30,
+                  28,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF101827),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: kCyan.withValues(alpha: 0.38),
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: kCyan.withValues(alpha: 0.18),
+                      blurRadius: 38,
+                      spreadRadius: 5,
+                    ),
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.48),
+                      blurRadius: 28,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 116,
+                      height: 116,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          RotationTransition(
+                            turns: _rotationAnimation,
+                            child: SizedBox(
+                              width: 112,
+                              height: 112,
+                              child: CircularProgressIndicator(
+                                value: 0.76,
+                                strokeWidth: 4,
+                                backgroundColor:
+                                    Colors.white.withValues(
+                                  alpha: 0.07,
+                                ),
+                                valueColor:
+                                    const AlwaysStoppedAnimation<Color>(
+                                  kCyan,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Container(
+                            width: 88,
+                            height: 88,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: kCyan.withValues(alpha: 0.12),
+                              border: Border.all(
+                                color: kCyan.withValues(alpha: 0.42),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color:
+                                      kCyan.withValues(alpha: 0.22),
+                                  blurRadius: 24,
+                                  spreadRadius: 3,
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.logout_rounded,
+                              color: kCyan,
+                              size: 43,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'CERRANDO SESIÓN',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: kTextMain,
+                        fontSize: 21,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Protegiendo tus datos y finalizando '
+                      'la sesión actual...',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: kTextMuted,
+                        fontSize: 13,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 26),
+                    TweenAnimationBuilder<double>(
+                      tween: Tween<double>(
+                        begin: 0,
+                        end: 1,
+                      ),
+                      duration: const Duration(
+                        milliseconds: 2200,
+                      ),
+                      curve: Curves.easeInOutCubic,
+                      builder: (
+                        BuildContext context,
+                        double value,
+                        Widget? child,
+                      ) {
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: LinearProgressIndicator(
+                            value: value,
+                            minHeight: 7,
+                            backgroundColor:
+                                Colors.white.withValues(alpha: 0.08),
+                            valueColor:
+                                const AlwaysStoppedAnimation<Color>(
+                              kCyan,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 15),
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.shield_outlined,
+                          color: kGreen,
+                          size: 16,
+                        ),
+                        SizedBox(width: 7),
+                        Text(
+                          'Sesión protegida',
+                          style: TextStyle(
+                            color: kGreen,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
