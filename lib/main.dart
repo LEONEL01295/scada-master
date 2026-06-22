@@ -11,6 +11,7 @@ import 'formulario.dart';
 import 'home.dart';
 import 'login.dart';
 import 'usage_monitor.dart';
+import 'mqtt_placas_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -88,11 +89,15 @@ Future<void> main() async {
         ChangeNotifierProvider<UsageMonitor>.value(
           value: usageMonitor,
         ),
+        ChangeNotifierProvider<MqttPlacasService>(
+  create: (_) => MqttPlacasService(),
+),
       ],
       child: MyApp(
         firebaseInicializado: firebaseInicializado,
         firebaseError: firebaseError,
       ),
+      
     ),
   );
 }
@@ -136,9 +141,7 @@ Future<void> _createAdminIfNotExist() async {
       return;
     }
 
-    await FirebaseFirestore.instance
-        .collection('usuarios')
-        .add({
+    await FirebaseFirestore.instance.collection('usuarios').add({
       'nombre': 'Administrador Master',
       'correo': adminEmail,
 
@@ -207,7 +210,6 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'SCADA 4.0 · HITECH INGENIUM',
-
       theme: ThemeData(
         brightness: Brightness.dark,
         useMaterial3: true,
@@ -219,28 +221,17 @@ class MyApp extends StatelessWidget {
           error: Color(0xFFF43F5E),
         ),
       ),
-
       home: firebaseInicializado
           ? const LoginScreen()
           : FirebaseErrorScreen(
               error: firebaseError,
             ),
-
       routes: {
-        '/login': (BuildContext context) =>
-            const LoginScreen(),
-
-        '/home': (BuildContext context) =>
-            const ScadaMasterHome(),
-
-        '/espera': (BuildContext context) =>
-            const EsperaScreen(),
-
-        '/formulario': (BuildContext context) =>
-            const FormularioAlumnoScreen(),
-
-        '/encuesta': (BuildContext context) =>
-            const EncuestaScadaScreen(),
+        '/login': (BuildContext context) => const LoginScreen(),
+        '/home': (BuildContext context) => const ScadaMasterHome(),
+        '/espera': (BuildContext context) => const EsperaScreen(),
+        '/formulario': (BuildContext context) => const FormularioAlumnoScreen(),
+        '/encuesta': (BuildContext context) => const EncuestaScadaScreen(),
       },
     );
   }
@@ -328,7 +319,3 @@ class FirebaseErrorScreen extends StatelessWidget {
     );
   }
 }
-
-
-
-

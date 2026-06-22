@@ -1,10 +1,13 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+
 import 'usage_monitor.dart';
+import 'mqtt_placas_service.dart';
 
 import 'nube.dart' show CloudSyncDashboard;
 import 'analytics.dart' show AnalyticsDashboard;
@@ -51,6 +54,7 @@ enum AppView {
   robot,
   maquinado,
   prensado,
+  controlPlacas,
   conexiones,
   diagnosticoConexiones,
   historial,
@@ -63,6 +67,7 @@ enum AppView {
 
 class ScadaMasterHome extends StatefulWidget {
   const ScadaMasterHome({super.key});
+
   @override
   State<ScadaMasterHome> createState() => _ScadaMasterHomeState();
 }
@@ -78,8 +83,12 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
   @override
   void initState() {
     super.initState();
-    _clockTimer =
-        Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+
+    _clockTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => setState(() {}),
+    );
+
     _checkWelcome();
     _setUserOnlineStatus(true);
   }
@@ -90,7 +99,10 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
 
     setState(() {
       _userRol = prefs.getString('userRole') ?? 'Alumno';
-      if (_userRol == 'Operador') _userRol = 'Alumno';
+
+      if (_userRol == 'Operador') {
+        _userRol = 'Alumno';
+      }
     });
 
     if (shouldShow) {
@@ -98,9 +110,13 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
         _userName = prefs.getString('userName') ?? 'Usuario';
         _showWelcome = true;
       });
+
       await prefs.setBool('showWelcome', false);
+
       Future.delayed(const Duration(seconds: 3), () {
-        if (mounted) setState(() => _showWelcome = false);
+        if (mounted) {
+          setState(() => _showWelcome = false);
+        }
       });
     }
   }
@@ -108,22 +124,28 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
   Future<void> _setUserOnlineStatus(bool online) async {
     final prefs = await SharedPreferences.getInstance();
     final String? email = prefs.getString('userEmail');
+
     if (email != null) {
       try {
         final query = await FirebaseFirestore.instance
             .collection('usuarios')
-            .where('correo', isEqualTo: email)
+            .where(
+              'correo',
+              isEqualTo: email,
+            )
             .limit(1)
             .get();
+
         if (query.docs.isNotEmpty) {
           await query.docs.first.reference.update({
             'enLinea': online,
-            'ultimoAcceso':
-                DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
+            'ultimoAcceso': DateFormat(
+              'dd/MM/yyyy HH:mm:ss',
+            ).format(DateTime.now()),
           });
         }
       } catch (e) {
-        debugPrint("Error updating online status: $e");
+        debugPrint('Error updating online status: $e');
       }
     }
   }
@@ -136,8 +158,7 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
   }
 
   Future<void> _clearLocalSession() async {
-    final SharedPreferences prefs =
-        await SharedPreferences.getInstance();
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
 
     await prefs.setBool('isLoggedIn', false);
     await prefs.remove('userEmail');
@@ -191,8 +212,7 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
       },
     );
 
-    final Future<void> minimumAnimationTime =
-        Future<void>.delayed(
+    final Future<void> minimumAnimationTime = Future<void>.delayed(
       const Duration(milliseconds: 2400),
     );
 
@@ -243,27 +263,37 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
           ? null
           : Drawer(
               backgroundColor: kSidebar,
-              child: SafeArea(child: _sidebarContent(layout))),
+              child: SafeArea(
+                child: _sidebarContent(layout),
+              ),
+            ),
       body: Stack(
         children: [
           SafeArea(
-            child: Row(children: [
-              if (showSidebar)
-                Container(
-                  width: layout == _Layout.tablet ? 200 : 248,
-                  decoration: const BoxDecoration(
+            child: Row(
+              children: [
+                if (showSidebar)
+                  Container(
+                    width: layout == _Layout.tablet ? 200 : 248,
+                    decoration: const BoxDecoration(
                       color: kSidebar,
-                      border: Border(right: BorderSide(color: kBorder))),
-                  child: _sidebarContent(layout),
+                      border: Border(
+                        right: BorderSide(color: kBorder),
+                      ),
+                    ),
+                    child: _sidebarContent(layout),
+                  ),
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    child: KeyedSubtree(
+                      key: ValueKey(_view),
+                      child: _buildView(),
+                    ),
+                  ),
                 ),
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  child:
-                      KeyedSubtree(key: ValueKey(_view), child: _buildView()),
-                ),
-              ),
-            ]),
+              ],
+            ),
           ),
           if (_showWelcome)
             Positioned(
@@ -271,7 +301,9 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
               left: 0,
               right: 0,
               child: Center(
-                child: _WelcomeToast(name: _userName ?? 'Usuario'),
+                child: _WelcomeToast(
+                  name: _userName ?? 'Usuario',
+                ),
               ),
             ),
         ],
@@ -284,95 +316,235 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
     final monitor = Provider.of<UsageMonitor>(context);
 
     return SingleChildScrollView(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Container(
-          padding: EdgeInsets.symmetric(vertical: compact ? 16 : 22),
-          child: Column(children: [
-            Text('HITECH INGENIUM',
-                textAlign: TextAlign.center,
-                style: TextStyle(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: EdgeInsets.symmetric(
+              vertical: compact ? 16 : 22,
+            ),
+            child: Column(
+              children: [
+                Text(
+                  'HITECH INGENIUM',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
                     color: kCyan,
                     fontSize: compact ? 13 : 17,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: 1)),
-            const SizedBox(height: 3),
-            Text('SCADA MASTER',
-                textAlign: TextAlign.center,
-                style: TextStyle(
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'SCADA MASTER',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
                     color: kTextMuted,
                     fontSize: compact ? 9 : 11,
-                    letterSpacing: 2)),
-          ]),
-        ),
-        const Divider(color: kBorder, height: 1),
-        const SizedBox(height: 4),
-        _sectionLabel('ESTACIONES SCADA', compact),
-        _navTile('📊', 'Dashboard General', AppView.dashboard, kCyan, compact,
-            false),
-        _navTile('🎛️', 'Panel General', AppView.panelGeneral, kTeal, compact,
-            monitor.isStationActive('general')),
-        _navTile('⚙️', 'Centro Neumático', AppView.neumatico, kCyan, compact,
-            monitor.isStationActive('neumatico')),
-        _navTile('🤖', 'Robot 3 Ejes', AppView.robot, kPurple, compact,
-            monitor.isStationActive('robot')),
-        _navTile('🛠️', 'Centro Maquinados', AppView.maquinado, kGreen, compact,
-            monitor.isStationActive('maquinados')),
-        _navTile('🛑', 'Centro de Prensado', AppView.prensado, kRed, compact,
-            monitor.isStationActive('prensado')),
-        const SizedBox(height: 6),
-        const Divider(color: kBorder, height: 1),
-        const SizedBox(height: 4),
-        _sectionLabel('SISTEMA', compact),
-        if (_userRol == 'Administrador') ...[
+                    letterSpacing: 2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(
+            color: kBorder,
+            height: 1,
+          ),
+          const SizedBox(height: 4),
+          _sectionLabel(
+            'ESTACIONES SCADA',
+            compact,
+          ),
           _navTile(
-              '🔌', 'Conexiones', AppView.conexiones, kTeal, compact, false),
+            '📊',
+            'Dashboard General',
+            AppView.dashboard,
+            kCyan,
+            compact,
+            false,
+          ),
           _navTile(
+            '🎛️',
+            'Panel General',
+            AppView.panelGeneral,
+            kTeal,
+            compact,
+            monitor.isStationActive('general'),
+          ),
+          _navTile(
+            '⚙️',
+            'Centro Neumático',
+            AppView.neumatico,
+            kCyan,
+            compact,
+            monitor.isStationActive('neumatico'),
+          ),
+          _navTile(
+            '🤖',
+            'Robot 3 Ejes',
+            AppView.robot,
+            kPurple,
+            compact,
+            monitor.isStationActive('robot'),
+          ),
+          _navTile(
+            '🛠️',
+            'Centro Maquinados',
+            AppView.maquinado,
+            kGreen,
+            compact,
+            monitor.isStationActive('maquinados'),
+          ),
+          _navTile(
+            '🛑',
+            'Centro de Prensado',
+            AppView.prensado,
+            kRed,
+            compact,
+            monitor.isStationActive('prensado'),
+          ),
+          _navTile(
+            '📡',
+            'Control de Placas',
+            AppView.controlPlacas,
+            kGreen,
+            compact,
+            false,
+          ),
+          const SizedBox(height: 6),
+          const Divider(
+            color: kBorder,
+            height: 1,
+          ),
+          const SizedBox(height: 4),
+          _sectionLabel(
+            'SISTEMA',
+            compact,
+          ),
+          if (_userRol == 'Administrador') ...[
+            _navTile(
+              '🔌',
+              'Conexiones',
+              AppView.conexiones,
+              kTeal,
+              compact,
+              false,
+            ),
+            _navTile(
               '💻',
               'Diagnóstico de Conexiones',
               AppView.diagnosticoConexiones,
               const Color.fromARGB(255, 58, 145, 226),
               compact,
-              false),
+              false,
+            ),
+          ],
+          if (_userRol == 'Administrador' || _userRol == 'Ingeniero')
+            _navTile(
+              '📋',
+              'Historial / Logs',
+              AppView.historial,
+              kOrange,
+              compact,
+              false,
+            ),
+          if (_userRol == 'Administrador')
+            _navTile(
+              '👥',
+              'Usuarios',
+              AppView.usuarios,
+              kPink,
+              compact,
+              false,
+              hasAlert: monitor.pendingUsersCount > 0,
+            ),
+          if (_userRol == 'Administrador')
+            _navTile(
+              '📅',
+              'Horarios de Uso',
+              AppView.horarios,
+              Colors.blue,
+              compact,
+              false,
+            ),
+          _navTile(
+            '🤖',
+            'Chatbot AI',
+            AppView.chatbot,
+            kCyan,
+            compact,
+            false,
+          ),
+          if (_userRol == 'Administrador')
+            _navTile(
+              '☁️',
+              'Cloud Sync',
+              AppView.nube,
+              kCyan,
+              compact,
+              false,
+            ),
+          _navTile(
+            '👤',
+            'Mi Perfil',
+            AppView.perfil,
+            kCyan,
+            compact,
+            false,
+          ),
+          const SizedBox(height: 12),
+          const Divider(
+            color: kBorder,
+            height: 1,
+          ),
+          const SizedBox(height: 4),
+          _logoutTile(compact),
         ],
-        if (_userRol == 'Administrador' || _userRol == 'Ingeniero')
-          _navTile('📋', 'Historial / Logs', AppView.historial, kOrange,
-              compact, false),
-        if (_userRol == 'Administrador')
-          _navTile('👥', 'Usuarios', AppView.usuarios, kPink, compact, false,
-              hasAlert: monitor.pendingUsersCount > 0),
-        if (_userRol == 'Administrador')
-          _navTile('📅', 'Horarios de Uso', AppView.horarios, Colors.blue,
-              compact, false),
-        _navTile('🤖', 'Chatbot AI', AppView.chatbot, kCyan, compact, false),
-        if (_userRol == 'Administrador')
-          _navTile('☁️', 'Cloud Sync', AppView.nube, kCyan, compact, false),
-        _navTile('👤', 'Mi Perfil', AppView.perfil, kCyan, compact, false),
-        const SizedBox(height: 12),
-        const Divider(color: kBorder, height: 1),
-        const SizedBox(height: 4),
-        _logoutTile(compact),
-      ]),
+      ),
     );
   }
 
-  Widget _sectionLabel(String text, bool compact) => Padding(
-        padding: EdgeInsets.fromLTRB(compact ? 12 : 20, 8, 0, 4),
-        child: Text(text,
-            style: TextStyle(
-                color: kTextMuted,
-                fontSize: compact ? 8 : 9,
-                letterSpacing: 1.4,
-                fontWeight: FontWeight.w600)),
-      );
+  Widget _sectionLabel(String text, bool compact) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        compact ? 12 : 20,
+        8,
+        0,
+        4,
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: kTextMuted,
+          fontSize: compact ? 8 : 9,
+          letterSpacing: 1.4,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
 
-  Widget _navTile(String em, String lbl, AppView v, Color col, bool compact,
-      bool isProcessing,
-      {bool hasAlert = false}) {
+  Widget _navTile(
+    String em,
+    String lbl,
+    AppView v,
+    Color col,
+    bool compact,
+    bool isProcessing, {
+    bool hasAlert = false,
+  }) {
     final active = _view == v;
     final bool showAlert = hasAlert && !active;
+
     final highlightCol = isProcessing
         ? Colors.yellowAccent
-        : (active ? kCyan : (showAlert ? Colors.orangeAccent : col));
+        : active
+            ? kCyan
+            : showAlert
+                ? Colors.orangeAccent
+                : col;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 180),
@@ -380,140 +552,784 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
         color:
             active ? highlightCol.withValues(alpha: 0.12) : Colors.transparent,
         border: Border(
-            left: BorderSide(
-                color: active ? highlightCol : Colors.transparent, width: 3)),
+          left: BorderSide(
+            color: active ? highlightCol : Colors.transparent,
+            width: 3,
+          ),
+        ),
       ),
       child: InkWell(
         onTap: () {
           setState(() => _view = v);
-          if (MediaQuery.of(context).size.width <= 600) Navigator.pop(context);
+
+          if (MediaQuery.of(context).size.width <= 600) {
+            Navigator.pop(context);
+          }
         },
         child: Padding(
           padding: EdgeInsets.symmetric(
-              horizontal: compact ? 12 : 20, vertical: compact ? 10 : 13),
-          child: Row(children: [
-            isProcessing
-                ? const SizedBox(
-                    width: 15,
-                    height: 15,
-                    child: CircularProgressIndicator(
+            horizontal: compact ? 12 : 20,
+            vertical: compact ? 10 : 13,
+          ),
+          child: Row(
+            children: [
+              isProcessing
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation(Colors.yellowAccent)))
-                : Text(em, style: TextStyle(fontSize: compact ? 13 : 15)),
-            const SizedBox(width: 8),
-            Flexible(
-                child: Text(lbl,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: isProcessing
-                            ? Colors.yellowAccent
-                            : (active
-                                ? kCyan
-                                : (showAlert
-                                    ? Colors.orangeAccent
-                                    : kTextMuted)),
-                        fontWeight: (active || isProcessing || showAlert)
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                        fontSize: compact ? 11 : 13))),
-            if (isProcessing) ...[
-              const SizedBox(width: 5),
-              const Icon(Icons.settings_suggest,
-                  color: Colors.yellowAccent, size: 14),
+                        valueColor: AlwaysStoppedAnimation(
+                          Colors.yellowAccent,
+                        ),
+                      ),
+                    )
+                  : Text(
+                      em,
+                      style: TextStyle(
+                        fontSize: compact ? 13 : 15,
+                      ),
+                    ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  lbl,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isProcessing
+                        ? Colors.yellowAccent
+                        : active
+                            ? kCyan
+                            : showAlert
+                                ? Colors.orangeAccent
+                                : kTextMuted,
+                    fontWeight: active || isProcessing || showAlert
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    fontSize: compact ? 11 : 13,
+                  ),
+                ),
+              ),
+              if (isProcessing) ...[
+                const SizedBox(width: 5),
+                const Icon(
+                  Icons.settings_suggest,
+                  color: Colors.yellowAccent,
+                  size: 14,
+                ),
+              ],
+              if (showAlert) ...[
+                const SizedBox(width: 5),
+                const Icon(
+                  Icons.priority_high_rounded,
+                  color: Colors.orangeAccent,
+                  size: 16,
+                ),
+              ],
             ],
-            if (showAlert) ...[
-              const SizedBox(width: 5),
-              const Icon(Icons.priority_high_rounded,
-                  color: Colors.orangeAccent, size: 16),
-            ]
-          ]),
+          ),
         ),
       ),
     );
   }
 
-  Widget _logoutTile(bool compact) => AnimatedOpacity(
-        duration: const Duration(milliseconds: 180),
-        opacity: _isLoggingOut ? 0.55 : 1.0,
-        child: InkWell(
-          onTap: _isLoggingOut ? null : _logout,
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 12 : 20,
-              vertical: compact ? 10 : 13,
-            ),
-            child: Row(
-              children: [
-                if (_isLoggingOut)
-                  SizedBox(
-                    width: compact ? 18 : 20,
-                    height: compact ? 18 : 20,
-                    child: const CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: kRed,
-                    ),
-                  )
-                else
-                  Icon(
-                    Icons.logout_rounded,
+  Widget _logoutTile(bool compact) {
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: _isLoggingOut ? 0.55 : 1.0,
+      child: InkWell(
+        onTap: _isLoggingOut ? null : _logout,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 12 : 20,
+            vertical: compact ? 10 : 13,
+          ),
+          child: Row(
+            children: [
+              if (_isLoggingOut)
+                SizedBox(
+                  width: compact ? 18 : 20,
+                  height: compact ? 18 : 20,
+                  child: const CircularProgressIndicator(
+                    strokeWidth: 2,
                     color: kRed,
-                    size: compact ? 18 : 20,
                   ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    _isLoggingOut
-                        ? 'Cerrando sesión...'
-                        : 'Cerrar Sesión',
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: kRed,
-                      fontWeight: FontWeight.bold,
-                      fontSize: compact ? 11 : 13,
-                    ),
+                )
+              else
+                Icon(
+                  Icons.logout_rounded,
+                  color: kRed,
+                  size: compact ? 18 : 20,
+                ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  _isLoggingOut ? 'Cerrando sesión...' : 'Cerrar Sesión',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: kRed,
+                    fontWeight: FontWeight.bold,
+                    fontSize: compact ? 11 : 13,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-      );
+      ),
+    );
+  }
 
   Widget _buildView() {
     switch (_view) {
       case AppView.dashboard:
         return const AnalyticsDashboard();
+
       case AppView.panelGeneral:
         return const PanelGeneralScreen();
+
       case AppView.neumatico:
         return const ScadaNeumaticoBoard();
+
       case AppView.robot:
         return const ScadaRobotDashboard();
+
       case AppView.maquinado:
         return const ScadaMaquinadosDashboard();
+
       case AppView.prensado:
         return const ScadaPrensadoScreen();
+
+      case AppView.controlPlacas:
+        return const _ControlPlacasMqttScreen();
+
       case AppView.conexiones:
         return const ConexionesScreen();
+
       case AppView.diagnosticoConexiones:
         return const DiagnosticoScreen();
+
       case AppView.historial:
         return const LogsScreen();
+
       case AppView.usuarios:
         return const UsuariosScreen();
+
       case AppView.horarios:
         return const HorariosScreen();
+
       case AppView.nube:
         return const CloudSyncDashboard();
+
       case AppView.perfil:
         return const PerfilScreen();
+
       case AppView.chatbot:
         return const ChatScreen();
     }
   }
 }
 
+class _ControlPlacasMqttScreen extends StatefulWidget {
+  const _ControlPlacasMqttScreen();
+
+  @override
+  State<_ControlPlacasMqttScreen> createState() =>
+      _ControlPlacasMqttScreenState();
+}
+
+class _ControlPlacasMqttScreenState extends State<_ControlPlacasMqttScreen> {
+  final TextEditingController _ipController = TextEditingController(
+    text: '192.168.4.1',
+  );
+
+  @override
+  void dispose() {
+    _ipController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mqtt = context.watch<MqttPlacasService>();
+
+    return Scaffold(
+      backgroundColor: kBgDark,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _header(mqtt),
+              const SizedBox(height: 18),
+              _connectionPanel(context, mqtt),
+              const SizedBox(height: 18),
+              _controlGeneral(context, mqtt),
+              const SizedBox(height: 18),
+              _statusCards(mqtt),
+              const SizedBox(height: 18),
+              _lastMessage(mqtt),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _header(MqttPlacasService mqtt) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: kPanelBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: mqtt.conectado ? kGreen : kBorder,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            mqtt.conectado
+                ? Icons.wifi_tethering_rounded
+                : Icons.wifi_off_rounded,
+            color: mqtt.conectado ? kGreen : kRed,
+            size: 42,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Control de Placas por IP Local',
+                  style: TextStyle(
+                    color: kTextMain,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  mqtt.conectado
+                      ? 'Conectado al broker ${mqtt.broker}:${mqtt.port}'
+                      : 'Sin conexión con la placa',
+                  style: TextStyle(
+                    color: mqtt.conectado ? kGreen : kTextMuted,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _connectionBadge(mqtt),
+        ],
+      ),
+    );
+  }
+
+  Widget _connectionBadge(MqttPlacasService mqtt) {
+    final Color color = mqtt.conectado
+        ? kGreen
+        : mqtt.conectando
+            ? kOrange
+            : kRed;
+
+    final String text = mqtt.conectado
+        ? 'CONECTADO'
+        : mqtt.conectando
+            ? 'CONECTANDO'
+            : 'DESCONECTADO';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(
+          color: color,
+        ),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+          letterSpacing: 1,
+        ),
+      ),
+    );
+  }
+
+  Widget _connectionPanel(
+    BuildContext context,
+    MqttPlacasService mqtt,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: kPanelBg,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: kBorder,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Conexión con placa local',
+            style: TextStyle(
+              color: kTextMain,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final bool compact = constraints.maxWidth < 720;
+
+              final input = TextField(
+                controller: _ipController,
+                style: const TextStyle(
+                  color: kTextMain,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'IP de la placa emisor',
+                  hintText: 'Ejemplo: 192.168.1.70',
+                  labelStyle: const TextStyle(
+                    color: kTextMuted,
+                  ),
+                  hintStyle: const TextStyle(
+                    color: kTextMuted,
+                  ),
+                  filled: true,
+                  fillColor: kBgDark,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(
+                      color: kBorder,
+                    ),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(
+                      color: kBorder,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: const BorderSide(
+                      color: kCyan,
+                    ),
+                  ),
+                ),
+              );
+
+              final buttons = Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: mqtt.conectando
+                        ? null
+                        : () {
+                            context.read<MqttPlacasService>().conectar(
+                                  brokerIp: _ipController.text.trim(),
+                                  mqttPort: 80,
+                                );
+                          },
+                    icon: const Icon(Icons.link_rounded),
+                    label: const Text('Conectar'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: mqtt.conectado
+                        ? () {
+                            context.read<MqttPlacasService>().desconectar();
+                          }
+                        : null,
+                    icon: const Icon(Icons.link_off_rounded),
+                    label: const Text('Desconectar'),
+                  ),
+                ],
+              );
+
+              if (compact) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    input,
+                    const SizedBox(height: 12),
+                    buttons,
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  Expanded(
+                    child: input,
+                  ),
+                  const SizedBox(width: 12),
+                  buttons,
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _controlGeneral(
+    BuildContext context,
+    MqttPlacasService mqtt,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: kPanelBg,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: kBorder,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Control general de placas',
+            style: TextStyle(
+              color: kTextMain,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              ElevatedButton.icon(
+                onPressed: mqtt.conectado
+                    ? () {
+                        context.read<MqttPlacasService>().iniciarTodo();
+                      }
+                    : null,
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: const Text('Iniciar todo'),
+              ),
+              ElevatedButton.icon(
+                onPressed: mqtt.conectado
+                    ? () {
+                        context.read<MqttPlacasService>().detenerTodo();
+                      }
+                    : null,
+                icon: const Icon(Icons.stop_rounded),
+                label: const Text('Detener todo'),
+              ),
+              ElevatedButton.icon(
+                onPressed: mqtt.conectado
+                    ? () {
+                        context.read<MqttPlacasService>().resetearTodo();
+                      }
+                    : null,
+                icon: const Icon(Icons.restart_alt_rounded),
+                label: const Text('Reset'),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kRed,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: mqtt.conectado
+                    ? () {
+                        context.read<MqttPlacasService>().paroEmergencia();
+                      }
+                    : null,
+                icon: const Icon(Icons.warning_rounded),
+                label: const Text('Paro de emergencia'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          const Divider(
+            color: kBorder,
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Control individual',
+            style: TextStyle(
+              color: kTextMain,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              OutlinedButton.icon(
+                onPressed: mqtt.conectado
+                    ? () {
+                        context.read<MqttPlacasService>().iniciarEmisor();
+                      }
+                    : null,
+                icon: const Icon(Icons.play_circle_outline_rounded),
+                label: const Text('Iniciar emisor'),
+              ),
+              OutlinedButton.icon(
+                onPressed: mqtt.conectado
+                    ? () {
+                        context.read<MqttPlacasService>().detenerEmisor();
+                      }
+                    : null,
+                icon: const Icon(Icons.pause_circle_outline_rounded),
+                label: const Text('Detener emisor'),
+              ),
+              OutlinedButton.icon(
+                onPressed: mqtt.conectado
+                    ? () {
+                        context.read<MqttPlacasService>().iniciarReceptor();
+                      }
+                    : null,
+                icon: const Icon(Icons.play_circle_outline_rounded),
+                label: const Text('Iniciar receptor'),
+              ),
+              OutlinedButton.icon(
+                onPressed: mqtt.conectado
+                    ? () {
+                        context.read<MqttPlacasService>().detenerReceptor();
+                      }
+                    : null,
+                icon: const Icon(Icons.pause_circle_outline_rounded),
+                label: const Text('Detener receptor'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusCards(MqttPlacasService mqtt) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool compact = constraints.maxWidth < 900;
+
+        final cards = [
+          _statusCard(
+            title: 'Gateway',
+            icon: Icons.router_rounded,
+            data: mqtt.estadoGateway,
+            color: kCyan,
+          ),
+          _statusCard(
+            title: 'Placa emisor',
+            icon: Icons.sensors_rounded,
+            data: mqtt.estadoEmisor,
+            color: kGreen,
+          ),
+          _statusCard(
+            title: 'Placa receptor',
+            icon: Icons.memory_rounded,
+            data: mqtt.estadoReceptor,
+            color: kPurple,
+          ),
+        ];
+
+        if (compact) {
+          return Column(
+            children: cards
+                .map(
+                  (card) => Padding(
+                    padding: const EdgeInsets.only(
+                      bottom: 12,
+                    ),
+                    child: card,
+                  ),
+                )
+                .toList(),
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: cards
+              .map(
+                (card) => Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(
+                      right: 12,
+                    ),
+                    child: card,
+                  ),
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+
+  Widget _statusCard({
+    required String title,
+    required IconData icon,
+    required Map<String, dynamic> data,
+    required Color color,
+  }) {
+    final String estado = data['estado']?.toString() ?? 'Sin datos';
+    final String mensaje = data['mensaje']?.toString() ?? 'Esperando datos';
+    final String running = data['running']?.toString() ?? '---';
+    final String emergency = data['emergency']?.toString() ?? '---';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: kPanelBg,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: color.withValues(alpha: 0.42),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                color: color,
+                size: 28,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: kTextMain,
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _dataLine(
+            'Estado',
+            estado,
+          ),
+          _dataLine(
+            'Trabajando',
+            running,
+          ),
+          _dataLine(
+            'Emergencia',
+            emergency,
+          ),
+          _dataLine(
+            'Mensaje',
+            mensaje,
+          ),
+          if (data.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: kBgDark,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                data.toString(),
+                style: const TextStyle(
+                  color: kTextMuted,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _dataLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(
+        bottom: 7,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 95,
+            child: Text(
+              '$label:',
+              style: const TextStyle(
+                color: kTextMuted,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: kTextMain,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _lastMessage(MqttPlacasService mqtt) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: kPanelBg,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: kBorder,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Último mensaje de la placa',
+            style: TextStyle(
+              color: kTextMain,
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SelectableText(
+            mqtt.ultimoMensaje,
+            style: const TextStyle(
+              color: kTextMuted,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _LogoutAnimationOverlay extends StatefulWidget {
   const _LogoutAnimationOverlay();
@@ -523,8 +1339,7 @@ class _LogoutAnimationOverlay extends StatefulWidget {
       _LogoutAnimationOverlayState();
 }
 
-class _LogoutAnimationOverlayState
-    extends State<_LogoutAnimationOverlay>
+class _LogoutAnimationOverlayState extends State<_LogoutAnimationOverlay>
     with TickerProviderStateMixin {
   late final AnimationController _entryController;
   late final AnimationController _rotationController;
@@ -590,12 +1405,8 @@ class _LogoutAnimationOverlayState
 
   @override
   Widget build(BuildContext context) {
-    final double screenWidth =
-        MediaQuery.sizeOf(context).width;
-
-    final double cardWidth = screenWidth < 430
-        ? screenWidth - 40
-        : 360;
+    final double screenWidth = MediaQuery.sizeOf(context).width;
+    final double cardWidth = screenWidth < 430 ? screenWidth - 40 : 360;
 
     return Material(
       color: Colors.transparent,
@@ -655,11 +1466,8 @@ class _LogoutAnimationOverlayState
                                 value: 0.76,
                                 strokeWidth: 4,
                                 backgroundColor:
-                                    Colors.white.withValues(
-                                  alpha: 0.07,
-                                ),
-                                valueColor:
-                                    const AlwaysStoppedAnimation<Color>(
+                                    Colors.white.withValues(alpha: 0.07),
+                                valueColor: const AlwaysStoppedAnimation<Color>(
                                   kCyan,
                                 ),
                               ),
@@ -676,8 +1484,7 @@ class _LogoutAnimationOverlayState
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color:
-                                      kCyan.withValues(alpha: 0.22),
+                                  color: kCyan.withValues(alpha: 0.22),
                                   blurRadius: 24,
                                   spreadRadius: 3,
                                 ),
@@ -736,8 +1543,7 @@ class _LogoutAnimationOverlayState
                             minHeight: 7,
                             backgroundColor:
                                 Colors.white.withValues(alpha: 0.08),
-                            valueColor:
-                                const AlwaysStoppedAnimation<Color>(
+                            valueColor: const AlwaysStoppedAnimation<Color>(
                               kCyan,
                             ),
                           ),
@@ -777,7 +1583,11 @@ class _LogoutAnimationOverlayState
 
 class _WelcomeToast extends StatefulWidget {
   final String name;
-  const _WelcomeToast({required this.name});
+
+  const _WelcomeToast({
+    required this.name,
+  });
+
   @override
   State<_WelcomeToast> createState() => _WelcomeToastState();
 }
@@ -791,16 +1601,38 @@ class _WelcomeToastState extends State<_WelcomeToast>
   @override
   void initState() {
     super.initState();
+
     _anim = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 600));
-    _scale = Tween<double>(begin: 0.5, end: 1.0)
-        .animate(CurvedAnimation(parent: _anim, curve: Curves.elasticOut));
-    _fade = Tween<double>(begin: 0.0, end: 1.0)
-        .animate(CurvedAnimation(parent: _anim, curve: Curves.easeIn));
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+
+    _scale = Tween<double>(
+      begin: 0.5,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _anim,
+        curve: Curves.elasticOut,
+      ),
+    );
+
+    _fade = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _anim,
+        curve: Curves.easeIn,
+      ),
+    );
+
     _anim.forward();
 
     Future.delayed(const Duration(milliseconds: 2400), () {
-      if (mounted) _anim.reverse();
+      if (mounted) {
+        _anim.reverse();
+      }
     });
   }
 
@@ -817,29 +1649,37 @@ class _WelcomeToastState extends State<_WelcomeToast>
       child: ScaleTransition(
         scale: _scale,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 12,
+          ),
           decoration: BoxDecoration(
             color: kCyan,
             borderRadius: BorderRadius.circular(30),
             boxShadow: [
               BoxShadow(
-                  color: kCyan.withValues(alpha: 0.4),
-                  blurRadius: 20,
-                  spreadRadius: 2)
+                color: kCyan.withValues(alpha: 0.4),
+                blurRadius: 20,
+                spreadRadius: 2,
+              ),
             ],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.waving_hand_rounded,
-                  color: Colors.black87, size: 20),
+              const Icon(
+                Icons.waving_hand_rounded,
+                color: Colors.black87,
+                size: 20,
+              ),
               const SizedBox(width: 12),
               Text(
                 'Bienvenido, ${widget.name}',
                 style: const TextStyle(
-                    color: Colors.black87,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15),
+                  color: Colors.black87,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
               ),
             ],
           ),
