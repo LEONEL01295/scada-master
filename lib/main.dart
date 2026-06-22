@@ -90,14 +90,13 @@ Future<void> main() async {
           value: usageMonitor,
         ),
         ChangeNotifierProvider<MqttPlacasService>(
-  create: (_) => MqttPlacasService(),
-),
+          create: (_) => MqttPlacasService(),
+        ),
       ],
       child: MyApp(
         firebaseInicializado: firebaseInicializado,
         firebaseError: firebaseError,
       ),
-      
     ),
   );
 }
