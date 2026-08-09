@@ -1,278 +1,192 @@
 import 'dart:async';
 import 'dart:convert';
-
+import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 
-class MqttPlacasService extends ChangeNotifier {
+/// Clase que maneja el túnel de datos exclusivo para UNA placa
+class PlateHandler extends ChangeNotifier {
+  final String ip;
+  final int port;
+  final String label;
+
+  Socket? _socket;
   bool conectado = false;
   bool conectando = false;
+  int sent = 0;
+  int received = 0;
+  int lost = 0;
+  String latencia = '--';
+  Map<String, dynamic> telemetry = {};
+  Timer? _heartbeat;
+  DateTime? _lastPingTime;
 
-  // Ahora esta IP será la IP LOCAL DE TU PLACA EMISOR.
-  // Ejemplo común cuando la placa crea su propia red WiFi:
-  // 192.168.4.1
-  String broker = '192.168.4.1';
+  PlateHandler({required this.ip, required this.port, required this.label});
 
-  // Se conserva port para no romper tu home.dart.
-  // En HTTP normalmente se usa el puerto 80.
-  int port = 80;
-
-  Map<String, dynamic> estadoGateway = {};
-  Map<String, dynamic> estadoEmisor = {};
-  Map<String, dynamic> estadoReceptor = {};
-
-  String ultimoMensaje = 'Sin conexión con la placa';
-
-  Timer? _statusTimer;
-
-  Uri _uri(String path, [Map<String, String>? query]) {
-    return Uri.http('$broker:$port', path, query);
-  }
-
-  Future<void> conectar({
-    required String brokerIp,
-    int mqttPort = 80,
-  }) async {
+  Future<void> connect() async {
     if (conectado || conectando) return;
-
-    broker = brokerIp.trim();
-    port = mqttPort;
+    
+    _heartbeat?.cancel();
+    try { 
+      await _socket?.close(); 
+      _socket?.destroy(); 
+    } catch (_) {}
+    _socket = null;
 
     conectando = true;
-    ultimoMensaje = 'Conectando con placa $broker:$port...';
     notifyListeners();
 
-    try {
-      final ok = await _leerEstado();
+    await Future.delayed(const Duration(milliseconds: 1000));
 
-      if (!ok) {
-        conectado = false;
-        conectando = false;
-        ultimoMensaje =
-            'No se pudo conectar. Verifica la IP de la placa y que esté en la misma red.';
-        notifyListeners();
-        return;
-      }
+    try {
+      _socket = await Socket.connect(ip, port, timeout: const Duration(seconds: 5));
+      
+      _socket!.listen(
+        (data) => _onData(data),
+        onDone: () => _onDisconnect(),
+        onError: (e) => _onDisconnect(),
+        cancelOnError: true,
+      );
 
       conectado = true;
       conectando = false;
-      ultimoMensaje = 'Conectado a placa local $broker:$port';
+      _startPing();
       notifyListeners();
-
-      _statusTimer?.cancel();
-      _statusTimer = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => _leerEstado(),
-      );
     } catch (e) {
-      conectado = false;
-      conectando = false;
-      ultimoMensaje = 'Error conectando con la placa: $e';
-      notifyListeners();
+      lost++;
+      _onDisconnect();
     }
   }
 
-  Future<bool> _leerEstado() async {
-    try {
-      final response = await http
-          .get(
-            _uri('/status'),
-          )
-          .timeout(
-            const Duration(seconds: 3),
-          );
-
-      if (response.statusCode != 200) {
-        ultimoMensaje = 'Error HTTP ${response.statusCode}: ${response.body}';
-        notifyListeners();
-        return false;
-      }
-
-      final data = jsonDecode(response.body);
-
-      if (data is Map<String, dynamic>) {
-        _procesarEstado(data);
-        ultimoMensaje = 'Estado recibido: ${response.body}';
-        notifyListeners();
-        return true;
-      }
-
-      ultimoMensaje = 'Respuesta inválida de la placa: ${response.body}';
-      notifyListeners();
-      return false;
-    } catch (e) {
-      ultimoMensaje = 'No se pudo leer /status: $e';
-      notifyListeners();
-      return false;
-    }
-  }
-
-  void _procesarEstado(Map<String, dynamic> data) {
-    /*
-      La placa puede responder de dos formas:
-
-      FORMA 1:
-      {
-        "gateway": {...},
-        "emisor": {...},
-        "receptor": {...}
-      }
-
-      FORMA 2:
-      {
-        "device": "emisor",
-        "estado": 1,
-        "running": true,
-        "emergency": false,
-        "mensaje": "Trabajando"
-      }
-    */
-
-    if (data.containsKey('gateway')) {
-      final gateway = data['gateway'];
-      if (gateway is Map) {
-        estadoGateway = Map<String, dynamic>.from(gateway);
-      }
-    }
-
-    if (data.containsKey('emisor')) {
-      final emisor = data['emisor'];
-      if (emisor is Map) {
-        estadoEmisor = Map<String, dynamic>.from(emisor);
-      }
-    }
-
-    if (data.containsKey('receptor')) {
-      final receptor = data['receptor'];
-      if (receptor is Map) {
-        estadoReceptor = Map<String, dynamic>.from(receptor);
-      }
-    }
-
-    final device = data['device']?.toString();
-
-    if (device == 'gateway') {
-      estadoGateway = data;
-    } else if (device == 'emisor') {
-      estadoEmisor = data;
-    } else if (device == 'receptor') {
-      estadoReceptor = data;
-    } else {
-      estadoGateway = data;
-    }
-  }
-
-  Future<void> enviarComando({
-    required String destino,
-    required String comando,
-  }) async {
-    if (!conectado) {
-      ultimoMensaje = 'No se puede enviar comando: placa no conectada';
-      notifyListeners();
-      return;
-    }
-
-    try {
-      /*
-        Tu placa emisor debe tener esta ruta:
-
-        /cmd?to=todos&cmd=start
-        /cmd?to=todos&cmd=stop
-        /cmd?to=todos&cmd=reset
-        /cmd?to=todos&cmd=emergency_stop
-
-        También sirve para control individual:
-
-        /cmd?to=emisor&cmd=start
-        /cmd?to=receptor&cmd=stop
-      */
-
-      final response = await http
-          .get(
-            _uri(
-              '/cmd',
-              {
-                'to': destino,
-                'cmd': comando,
-              },
-            ),
-          )
-          .timeout(
-            const Duration(seconds: 3),
-          );
-
-      if (response.statusCode == 200) {
-        ultimoMensaje =
-            'Comando enviado a $destino: $comando | Respuesta: ${response.body}';
-
+  void _startPing() {
+    _heartbeat?.cancel();
+    _heartbeat = Timer.periodic(const Duration(seconds: 3), (t) {
+      if (conectado && _socket != null) {
         try {
-          final data = jsonDecode(response.body);
-          if (data is Map<String, dynamic>) {
-            _procesarEstado(data);
-          }
-        } catch (_) {
-          // Si la placa responde texto simple, no pasa nada.
-        }
+          _lastPingTime = DateTime.now();
+          _socket!.write('${jsonEncode({"comando": "ping"})}\n');
+          sent++;
+        } catch (_) { _onDisconnect(); }
+      }
+    });
+  }
 
-        notifyListeners();
+  void _onData(List<int> bytes) {
+    received++;
+    
+    if (_lastPingTime != null) {
+      final diff = DateTime.now().difference(_lastPingTime!).inMilliseconds;
+      latencia = '$diff ms';
+      _lastPingTime = null;
+    }
 
-        await _leerEstado();
-      } else {
-        ultimoMensaje =
-            'Error enviando comando. HTTP ${response.statusCode}: ${response.body}';
+    try {
+      final msg = utf8.decode(bytes).trim();
+      final lines = msg.split('\n');
+      final last = lines.last.trim();
+      if (last.startsWith('{') && last.endsWith('}')) {
+        telemetry = jsonDecode(last);
         notifyListeners();
       }
-    } catch (e) {
-      ultimoMensaje = 'Error enviando comando a la placa: $e';
-      notifyListeners();
-    }
+    } catch (_) {}
   }
 
-  void iniciarTodo() {
-    enviarComando(destino: 'todos', comando: 'start');
-  }
-
-  void detenerTodo() {
-    enviarComando(destino: 'todos', comando: 'stop');
-  }
-
-  void resetearTodo() {
-    enviarComando(destino: 'todos', comando: 'reset');
-  }
-
-  void paroEmergencia() {
-    enviarComando(destino: 'todos', comando: 'emergency_stop');
-  }
-
-  void iniciarEmisor() {
-    enviarComando(destino: 'emisor', comando: 'start');
-  }
-
-  void detenerEmisor() {
-    enviarComando(destino: 'emisor', comando: 'stop');
-  }
-
-  void iniciarReceptor() {
-    enviarComando(destino: 'receptor', comando: 'start');
-  }
-
-  void detenerReceptor() {
-    enviarComando(destino: 'receptor', comando: 'stop');
-  }
-
-  void desconectar() {
-    _statusTimer?.cancel();
-    _statusTimer = null;
-
+  void _onDisconnect() {
     conectado = false;
     conectando = false;
-    ultimoMensaje = 'Desconectado de la placa local';
+    _socket = null;
+    _heartbeat?.cancel();
     notifyListeners();
+  }
+
+  void send(String payload) {
+    if (!conectado || _socket == null) return;
+    try {
+      _socket!.write('$payload\n');
+      sent++;
+      notifyListeners();
+    } catch (_) { _onDisconnect(); }
+  }
+
+  void disconnect() {
+    _heartbeat?.cancel();
+    _socket?.destroy();
+    _onDisconnect();
+  }
+
+  // Alias para compatibilidad con UI
+  Future<void> conectar() => connect();
+  void deepCleanup() => disconnect();
+}
+
+/// Servicio global que orquesta las dos placas
+class MqttPlacasService extends ChangeNotifier {
+  // CONFIGURACIÓN DE IPS SEGURA (Evita conflictos con la tablet)
+  final PlateHandler placa1 = PlateHandler(ip: '192.168.4.1', port: 8080, label: 'PLACA 1');
+  final PlateHandler placa2 = PlateHandler(ip: '192.168.4.10', port: 8080, label: 'PLACA 2');
+
+  MqttPlacasService() {
+    placa1.addListener(notifyListeners);
+    placa2.addListener(notifyListeners);
+  }
+
+  bool get conectado => placa1.conectado || placa2.conectado;
+  int get paquetesEnviados => placa1.sent + placa2.sent;
+  int get paquetesRecibidos => placa1.received + placa2.received;
+  int get paquetesPerdidos => placa1.lost + placa2.lost;
+  Map<String, dynamic> get telemetry => placa1.telemetry;
+  String get latencia => placa1.conectado ? placa1.latencia : (placa2.conectado ? placa2.latencia : '--');
+
+  void enviarComando(String comando, String maqueta, int piezas) {
+    final msg = jsonEncode({
+      "comando": comando,
+      "maqueta": maqueta,
+      "piezas": piezas,
+      "timestamp": DateTime.now().millisecondsSinceEpoch
+    });
+
+    if (maqueta == 'robot' || maqueta == 'prensado') {
+      placa1.send(msg);
+    } else if (maqueta == 'neumatico' || maqueta == 'maquinados') {
+      placa2.send(msg);
+    } else {
+      placa1.send(msg);
+      placa2.send(msg);
+    }
+  }
+
+  void controlarActuador(String maqueta, int index, bool valor) {
+    final msg = jsonEncode({
+      "comando": "manual_control",
+      "maqueta": maqueta,
+      "rele": index,
+      "valor": valor
+    });
+
+    if (maqueta == 'robot' || maqueta == 'prensado') {
+      placa1.send(msg);
+    } else {
+      placa2.send(msg);
+    }
+  }
+
+  void stopEmergencia() {
+    final msg = jsonEncode({"comando": "emergency_stop"});
+    placa1.send(msg);
+    placa2.send(msg);
+  }
+
+  void restablecerSistema() {
+    final msg = jsonEncode({"comando": "reset"});
+    placa1.send(msg);
+    placa2.send(msg);
   }
 
   @override
   void dispose() {
-    desconectar();
+    placa1.removeListener(notifyListeners);
+    placa2.removeListener(notifyListeners);
+    placa1.disconnect();
+    placa2.disconnect();
     super.dispose();
   }
 }

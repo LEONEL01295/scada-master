@@ -5,17 +5,31 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:connectivity_plus/connectivity_plus.dart'; // Asegúrate de tener esto en pubspec.yaml
 
 class UsageMonitor extends ChangeNotifier {
   static final UsageMonitor _instance = UsageMonitor._internal();
 
   factory UsageMonitor() => _instance;
 
-  UsageMonitor._internal();
+  UsageMonitor._internal() {
+    // Iniciar escucha de conectividad para sincronización automática
+    Connectivity().onConnectivityChanged.listen(_handleConnectivityChange);
+  }
 
   // ==========================================================
   // ESTADO INTERNO
   // ==========================================================
+
+  // Búfer para logs generados sin internet (ej: conectado a la placa)
+  final List<Map<String, dynamic>> _offlineLogBuffer = [];
+  bool _isSyncing = false;
+
+  // Estados de telemetría de alta frecuencia (solo memoria)
+  final Map<String, Map<String, dynamic>> _currentTelemetry = {};
+  
+  // Pasos intermedios del ciclo actual (solo memoria)
+  final Map<String, List<String>> _intermediateCycleSteps = {};
 
   final Map<String, Duration> _stationTimes = {
     'general': Duration.zero,
@@ -313,37 +327,106 @@ class UsageMonitor extends ChangeNotifier {
   }
 
   // ==========================================================
-  // FIRESTORE
+  // FIRESTORE & SINCRONIZACIÓN HÍBRIDA
   // ==========================================================
 
+  /// Guarda un log. Si hay internet, lo sube a la nube. 
+  /// Si no (ej: conectado a la placa), lo guarda en el búfer local.
   Future<void> logEvent({
     required String maqueta,
     required String message,
     required String role,
     required String type,
+    bool isMilestone = false, // Solo los milestones son críticos para la nube
   }) async {
     try {
-      final SharedPreferences prefs =
-          await SharedPreferences.getInstance();
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      final String userName = prefs.getString('userName') ?? 'Usuario Desconocido';
 
-      final String userName =
-          prefs.getString('userName') ?? 'Usuario Desconocido';
-
-      await FirebaseFirestore.instance
-          .collection('historial')
-          .add({
+      final Map<String, dynamic> logData = {
         'timestamp': FieldValue.serverTimestamp(),
         'maqueta': maqueta,
         'message': message,
         'role': role,
         'userName': userName,
         'type': type,
-      });
+        'isMilestone': isMilestone,
+      };
+
+      // 1. Guardar siempre en historial local (pasos intermedios)
+      if (!isMilestone) {
+        _intermediateCycleSteps[maqueta] ??= [];
+        _intermediateCycleSteps[maqueta]!.add('[$maqueta] $message');
+        if (_intermediateCycleSteps[maqueta]!.length > 50) {
+          _intermediateCycleSteps[maqueta]!.removeAt(0);
+        }
+      }
+
+      // 2. Decidir si se sube a la nube
+      final connectivityResult = await Connectivity().checkConnectivity();
+      final bool hasInternet = !connectivityResult.contains(ConnectivityResult.none);
+
+      if (hasInternet && (isMilestone || type == 'critico')) {
+        // Subir directamente si es importante y hay red
+        await FirebaseFirestore.instance.collection('historial').add(logData);
+      } else {
+        // Guardar en el búfer para sincronización posterior
+        _offlineLogBuffer.add(logData);
+        debugPrint('Log guardado en búfer offline (${_offlineLogBuffer.length})');
+      }
     } catch (e, stackTrace) {
-      debugPrint('Error al guardar log: $e');
+      debugPrint('Error al procesar log: $e');
       debugPrintStack(stackTrace: stackTrace);
     }
   }
+
+  /// Maneja los cambios de red para disparar la sincronización
+  void _handleConnectivityChange(List<ConnectivityResult> results) {
+    if (!results.contains(ConnectivityResult.none)) {
+      syncPendingLogs();
+    }
+  }
+
+  /// Sube todos los logs acumulados en el búfer a Firebase
+  Future<void> syncPendingLogs() async {
+    if (_offlineLogBuffer.isEmpty || _isSyncing) return;
+
+    _isSyncing = true;
+    debugPrint('Iniciando sincronización de ${_offlineLogBuffer.length} logs...');
+
+    try {
+      final WriteBatch batch = FirebaseFirestore.instance.batch();
+      final CollectionReference collection = FirebaseFirestore.instance.collection('historial');
+
+      // Solo procesamos un máximo de 500 por lote (límite de batch de Firestore)
+      final List<Map<String, dynamic>> toSync = List.from(_offlineLogBuffer);
+      
+      for (var log in toSync) {
+        // Aseguramos un timestamp real al subir si el serverTimestamp falló en offline
+        if (log['timestamp'] == null || log['timestamp'] is! FieldValue) {
+           log['timestamp'] = FieldValue.serverTimestamp();
+        }
+        batch.set(collection.doc(), log);
+      }
+
+      await batch.commit();
+      _offlineLogBuffer.clear();
+      debugPrint('Sincronización completada con éxito.');
+    } catch (e) {
+      debugPrint('Error sincronizando logs: $e');
+    } finally {
+      _isSyncing = false;
+      _safeNotifyListeners();
+    }
+  }
+
+  // Métodos para telemetría de alta frecuencia (solo memoria)
+  void updateTelemetry(String stationId, Map<String, dynamic> data) {
+    _currentTelemetry[stationId] = data;
+    _safeNotifyListeners();
+  }
+
+  Map<String, dynamic> getTelemetry(String stationId) => _currentTelemetry[stationId] ?? {};
 
   Future<void> syncStationAuditoria(String stationId) async {
     final Map<String, int>? interactions =

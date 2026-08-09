@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'usage_monitor.dart';
 import 'schedule_guard.dart';
 import 'horario_fuera.dart';
+import 'mqtt_placas_service.dart';
 
 // ── Paleta propia ──
 const Color kBg = Color(0xFF081014);
@@ -197,18 +198,55 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
     }
 
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
+    
     if(mounted) setState(() => _act(id).on = val);
+    
+    // MAPEO DE RELÉS FÍSICOS (Doble Relé para Pistones)
+    // Relé 0: Compresor (0b11111110)
+    // Relé 1: Pistón Entrada (V1) - SALE (0b11111101)
+    // Relé 2: Pistón Entrada (V1) - RETRAE (0b11111011)
+    // Relé 3: Pistón Perforadora (V3) (0b11110111)
+    // Relé 4: Pistón Expulsión (V4) - SALE (0b11101111)
+    // Relé 5: Pistón Expulsión (V4) - RETRAE (0b11011111)
+    // Relé 6: Mesa Giratoria (M2) (0b10111111)
+    // Relé 7: Banda Transportadora (M3) (0b01111111)
+    
+    if (id == 'V1') {
+      // Si val es true -> SALE (Relé 1), Si val es false -> RETRAE (Relé 2)
+      placas.controlarActuador('neumatico', val ? 1 : 2, true);
+      // Apagar el opuesto después de un momento para no dejar la bobina encendida
+      Future.delayed(const Duration(milliseconds: 500), () {
+        placas.controlarActuador('neumatico', val ? 1 : 2, false);
+      });
+    } else if (id == 'V4') {
+      // Si val es true -> SALE (Relé 4), Si val es false -> RETRAE (Relé 5)
+      placas.controlarActuador('neumatico', val ? 4 : 5, true);
+      Future.delayed(const Duration(milliseconds: 500), () {
+        placas.controlarActuador('neumatico', val ? 4 : 5, false);
+      });
+    } else {
+      // Actuadores de un solo relé (M1, M2, M3, V3)
+      int index = -1;
+      if (id == 'M1') index = 0; // Compresor
+      if (id == 'V3') index = 3; // Perforadora
+      if (id == 'M2') index = 6; // Mesa Giratoria
+      if (id == 'M3') index = 7; // Banda Transportadora
+
+      if (index != -1) {
+        placas.controlarActuador('neumatico', index, val);
+      }
+    }
+
     if (!monitor.isStationActive('neumatico')) {
       monitor.incrementComponentInteraction('neumatico', 'actuador', id);
-      _logAudit('Forzó $id a ${val ? 'ENCENDIDO' : 'APAGADO'}', _NLogType.audit);
+      _logAudit('Enviado $id: ${val ? 'ON' : 'OFF'} a Placa 2', _NLogType.audit);
     }
   }
 
   void _resetToHome({bool log = true}) {
-    final monitor = Provider.of<UsageMonitor>(
-      context,
-      listen: false,
-    );
+    final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
 
     if (log) {
       _logAudit(
@@ -217,7 +255,8 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
       );
     }
 
-    // Las modificaciones del Provider se hacen fuera de setState.
+    placas.restablecerSistema();
+    
     monitor.setStationActive('neumatico', false);
     monitor.resetCyclePieces('neumatico');
 
@@ -245,6 +284,8 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
 
   Future<void> _startAutoCycle() async {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
+
     if (monitor.isStationActive('neumatico')) return;
 
     final int numPiezas = int.tryParse(_piezasController.text) ?? 0;
@@ -252,18 +293,28 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
       _logAudit('ERROR: El número de ciclos debe ser mayor a 0.', _NLogType.error);
       return;
     }
-    if (_pressure < 2.5) {
-      _logAudit('Falla de arranque: Presión neumática insuficiente.', _NLogType.error);
+
+    // VERIFICACIÓN DE CONEXIÓN
+    if (!placas.placa2.conectado) {
+      _logAudit('ERROR: Placa 2 no conectada. Verifique diagnóstico.', _NLogType.error);
       return;
     }
     
     monitor.setStationActive('neumatico', true);
     _updatePermissions();
 
-    _logAudit('══ INICIANDO CICLO AUTOMÁTICO PARA $numPiezas CICLOS ══', _NLogType.info);
+    _logAudit('══ ENVIANDO ORDEN A PLACA 2 ($numPiezas PIEZAS) ══', _NLogType.info);
 
+    // Comando real al hardware
+    placas.enviarComando('start', 'neumatico', numPiezas);
+
+    // Simulación visual en Tablet mientras el hardware trabaja
     for (int i = 0; i < numPiezas; i++) {
       if (!monitor.isStationActive('neumatico')) break;
+
+      // Limpiar auditoría local al iniciar cada nueva pieza para evitar acumulación
+      setState(() => _logs.clear());
+
       _logAudit('--- Procesando pieza ${i + 1} de $numPiezas ---', _NLogType.info);
       await _runSingleCycle();
       if (!monitor.isStationActive('neumatico')) {
@@ -305,12 +356,11 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
   }
 
   void _triggerEmergency() {
-    final monitor = Provider.of<UsageMonitor>(
-      context,
-      listen: false,
-    );
+    final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
 
     monitor.setStationActive('neumatico', false);
+    placas.stopEmergencia();
 
     if (mounted) {
       setState(() {
@@ -656,25 +706,51 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
     ]),
   );
 
-  Widget _panel({required String title, required Widget child}) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: kPanel,
-      border: Border.all(color: kBorderN),
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.only(bottom: 8),
-          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kBorderN))),
-          child: Text(title, style: const TextStyle(color: kCyanN, fontSize: 13, fontWeight: FontWeight.bold)),
-        ),
-        const SizedBox(height: 8),
-        child,
-      ],
-    ),
-  );
+  Widget _panel({required String title, required Widget child}) {
+    final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kPanel,
+        border: Border.all(color: kBorderN),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.only(bottom: 8),
+            decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: kBorderN))),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        color: kCyanN,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold)),
+                if (title.contains('Auditoría') && _logs.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: monitor.isStationActive('neumatico')
+                        ? null
+                        : () => setState(() => _logs.clear()),
+                    icon: const Icon(Icons.delete_sweep_rounded, size: 16),
+                    label: const Text('BORRAR', style: TextStyle(fontSize: 11)),
+                    style: TextButton.styleFrom(
+                      foregroundColor: kRedN,
+                      disabledForegroundColor: const Color(0xFF555555),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
+    );
+  }
 }

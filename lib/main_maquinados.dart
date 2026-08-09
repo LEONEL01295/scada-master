@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'usage_monitor.dart';
+import 'mqtt_placas_service.dart';
 
 // ── Paleta Unificada ──────────────────────────────────
 const Color kBg = Color(0xFF081014);
@@ -53,7 +54,6 @@ class ScadaMaquinadosDashboard extends StatefulWidget {
 
 class _ScadaMaquinadosDashboardState extends State<ScadaMaquinadosDashboard> {
   // --- Variables de Estado ---
-  String _clock = '';
   late Timer _clockTimer;
   final String _role = 'Ingeniero';
   String _mode = 'manual';
@@ -103,10 +103,7 @@ class _ScadaMaquinadosDashboardState extends State<ScadaMaquinadosDashboard> {
     super.dispose();
   }
 
-  void _updateClock() {
-    final n = DateTime.now();
-    _clock = '${n.hour.toString().padLeft(2, '0')}:${n.minute.toString().padLeft(2, '0')}:${n.second.toString().padLeft(2, '0')}';
-  }
+  void _updateClock() {}
 
   void _logAudit(String msg, LogType type) {
     final n = DateTime.now();
@@ -145,18 +142,31 @@ class _ScadaMaquinadosDashboardState extends State<ScadaMaquinadosDashboard> {
 
   void _toggleActuator(String id, bool val) {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
+    
     if(mounted) {
       setState(() => _act(id).on = val);
+      
+      // Enviar comando real a la Placa 2
+      // M1=0, M2=1, ..., M8=7
+      int index = int.parse(id.replaceAll('M', '')) - 1;
+      placas.controlarActuador('maquinados', index, val);
+
       if (!monitor.isStationActive('maquinados')) {
         monitor.incrementComponentInteraction('maquinados', 'actuador', id);
-        _logAudit('Forzó $id a ${val ? 'ENCENDIDO' : 'APAGADO'}', LogType.audit);
+        _logAudit('Enviado $id: ${val ? 'ON' : 'OFF'} a Placa 2', LogType.audit);
       }
     }
   }
   
   void _resetToHome({bool log = true}) {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
+    
     if (log) _logAudit('Restableciendo sistema a estado inicial...', LogType.audit);
+    
+    placas.restablecerSistema();
+
     if (mounted) {
       setState(() {
         monitor.setStationActive('maquinados', false);
@@ -173,17 +183,19 @@ class _ScadaMaquinadosDashboardState extends State<ScadaMaquinadosDashboard> {
 
   void _triggerEmergency() {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
-    if (mounted) {
-      setState(() { 
-        monitor.setStationActive('maquinados', false);
-        for (final a in _actuators) { a.on = false; } 
-      });
-    }
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
     
-    monitor.addFailure('maquinados');
+    placas.stopEmergencia();
 
-    _logAudit('¡PARO DE EMERGENCIA ACTIVADO! Todos los actuadores apagados.', LogType.error);
     if (mounted) {
+      setState(() {
+        monitor.setStationActive('maquinados', false);
+        for (final a in _actuators) { a.on = false; }
+      });
+      
+      monitor.addFailure('maquinados');
+
+      _logAudit('¡PARO DE EMERGENCIA ACTIVADO! Todos los actuadores apagados.', LogType.error);
       showDialog(
         context: context, 
         builder: (_) => AlertDialog(
@@ -198,71 +210,102 @@ class _ScadaMaquinadosDashboardState extends State<ScadaMaquinadosDashboard> {
 
   Future<void> _startAutoCycle() async {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
+
     if (monitor.isStationActive('maquinados')) return;
 
     final int numPiezas = int.tryParse(_piezasController.text) ?? 0;
-    if (numPiezas <= 0) { _logAudit('ERROR: El número de piezas debe ser mayor a 0.', LogType.error); return; }
-    
+    if (numPiezas <= 0) {
+      _logAudit('ERROR: El número de piezas debe ser mayor a 0.', LogType.error);
+      return;
+    }
+
+    // VERIFICACIÓN DE CONEXIÓN
+    if (!placas.placa2.conectado) {
+      _logAudit('ERROR: Placa 2 no conectada. Verifique diagnóstico.', LogType.error);
+      return;
+    }
+
     monitor.setStationActive('maquinados', true);
     _updatePermissions();
 
-    _logAudit('══ INICIANDO CICLO AUTOMÁTICO PARA $numPiezas PIEZAS ══', LogType.info);
+    _logAudit('══ ENVIANDO ORDEN A PLACA 2 ($numPiezas PIEZAS) ══', LogType.info);
+
+    // Comando real al hardware
+    placas.enviarComando('start', 'maquinados', numPiezas);
+
+    // Simulación visual en Tablet mientras el hardware trabaja
     for (int i = 0; i < numPiezas; i++) {
       if (!monitor.isStationActive('maquinados')) break;
+
+      // Limpiar auditoría local al iniciar cada nueva pieza
+      setState(() => _logs.clear());
+
       _logAudit('--- Procesando pieza ${i + 1} de $numPiezas ---', LogType.info);
-      await _runSingleCycle();
-      if (!monitor.isStationActive('maquinados')) { _logAudit('Ciclo interrumpido por PARO DE EMERGENCIA.', LogType.error); break; }
       
+      // La tablet solo simula visualmente para no saturar a la placa con comandos
+      // mientras la placa ejecuta su propia secuencia interna.
+      await _runSingleCycle(); 
+      
+      if (!monitor.isStationActive('maquinados')) {
+        _logAudit('Ciclo interrumpido por PARO DE EMERGENCIA.', LogType.error);
+        break;
+      }
+
       monitor.addProduction('maquinados');
     }
 
     monitor.setStationActive('maquinados', false);
     _updatePermissions();
     _logAudit('══ CICLO AUTOMÁTICO FINALIZADO ══', LogType.info);
-    monitor.syncStationAuditoria('maquinados'); // Sincronizar
+    monitor.syncStationAuditoria('maquinados');
   }
 
   Future<void> _runSingleCycle() async {
-     final monitor = Provider.of<UsageMonitor>(context, listen: false);
-     try {
+    final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    try {
       if (!monitor.isStationActive('maquinados') || !mounted) return;
-      setState(() { _sensor('P1').active = true; }); _logAudit('EST1 · P1 detectado · M1 enciende banda entrada', LogType.info);
-      _toggleActuator('M1', true); await Future.delayed(const Duration(seconds: 2));
+      setState(() { _sensor('P1').active = true; }); _logAudit('Hardware: Iniciando movimiento entrada', LogType.info);
+      setState(() => _act('M1').on = true); await Future.delayed(const Duration(milliseconds: 1500));
       if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _sensor('P1').active = false);
-      setState(() { _sensor('P2').active = true; }); _logAudit('EST2 · P2 detectado · M1 apaga · M2 empuja pieza', LogType.info);
-      _toggleActuator('M1', false); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M2', true); setState(() => _sensor('R1').active = false);
-      _logAudit('M2 ON · Empujador 1 activado', LogType.success); await Future.delayed(const Duration(seconds: 2));
+      setState(() { _sensor('P2').active = true; }); setState(() => _act('M1').on = false);
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M2').on = true); setState(() => _sensor('R1').active = false);
+      await Future.delayed(const Duration(milliseconds: 1500));
       if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('P2').active = false; });
-      _logAudit('EST3 · R1 en reposo · M2 apaga · M3 banda 2 activa', LogType.info); _toggleActuator('M2', false);
-      setState(() => _sensor('R1').active = true); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M3', true);
-      _logAudit('M3 ON · Banda 2 moviendo pieza hacia fresadora', LogType.success); await Future.delayed(const Duration(seconds: 2));
+      setState(() => _act('M2').on = false); setState(() => _sensor('R1').active = true);
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M3').on = true);
+      await Future.delayed(const Duration(milliseconds: 1500));
       if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('P3').active = true; });
-      _logAudit('EST4 · P3 detectado · Fresando...', LogType.info); _toggleActuator('M3', false); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M4', true);
-      _logAudit('M4 ON · Fresando pieza', LogType.success); await Future.delayed(const Duration(seconds: 2));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M4', false); _logAudit('M4 OFF · Fresado completado', LogType.audit); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M3', true); _toggleActuator('M6', true); setState(() => _sensor('P3').active = false);
-      _logAudit('M3+M6 ON · Avanzando pieza hacia taladradora', LogType.success); await Future.delayed(const Duration(seconds: 2));
+      setState(() => _act('M3').on = false); await Future.delayed(const Duration(milliseconds: 500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M4').on = true);
+      await Future.delayed(const Duration(milliseconds: 1500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M4').on = false); 
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _act('M3').on = true; _act('M6').on = true; }); setState(() => _sensor('P3').active = false);
+      await Future.delayed(const Duration(milliseconds: 1500));
       if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('P3').active = false; _sensor('P4').active = true; });
-      _logAudit('EST5 · P4 detectado · Taladrando...', LogType.info); _toggleActuator('M3', false); _toggleActuator('M6', false); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M5', true);
-      _logAudit('M5 ON · Taladrando pieza', LogType.success); await Future.delayed(const Duration(seconds: 2));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M5', false); _logAudit('M5 OFF · Taladrado completado', LogType.audit); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M6', true); await Future.delayed(const Duration(seconds: 1));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M6', false); setState(() { _sensor('P4').active = false; _sensor('R2').active = false; });
-      _toggleActuator('M7', true); _logAudit('M7 ON · Empujador 2 activado → salida', LogType.success); await Future.delayed(const Duration(seconds: 2));
+      setState(() { _act('M3').on = false; _act('M6').on = false; }); await Future.delayed(const Duration(milliseconds: 500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M5').on = true);
+      await Future.delayed(const Duration(milliseconds: 1500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M5').on = false);
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M6').on = true); await Future.delayed(const Duration(seconds: 1));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M6').on = false); setState(() { _sensor('P4').active = false; _sensor('R2').active = false; });
+      setState(() => _act('M7').on = true); await Future.delayed(const Duration(milliseconds: 1500));
       if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('R2').active = true; });
-      _logAudit('EST6 · R2 en reposo · M8 banda salida activa', LogType.info); _toggleActuator('M7', false); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M8', true);
-      _logAudit('M8 ON · Banda de producto terminado activa', LogType.success); await Future.delayed(const Duration(seconds: 2));
+      setState(() => _act('M7').on = false); await Future.delayed(const Duration(milliseconds: 500));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M8').on = true);
+      await Future.delayed(const Duration(milliseconds: 1500));
       if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('P5').active = true; });
-      _logAudit('EST7 · P5 detectado · Pieza en área de salida', LogType.info); await Future.delayed(const Duration(seconds: 1));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; _toggleActuator('M8', false);
+      await Future.delayed(const Duration(seconds: 1));
+      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M8').on = false);
       setState(() { _sensor('P5').active = false; });
-      _logAudit('✔ CICLO EXITOSO · Pieza maquinada', LogType.success);
-    } catch (e) { _logAudit('ERROR en la secuencia automática: $e', LogType.error); }
+      _logAudit('✔ PIEZA FINALIZADA EN HARDWARE', LogType.success);
+    } catch (e) {
+      _logAudit('ERROR en la secuencia automática: $e', LogType.error);
+    }
   }
 
   @override
@@ -327,7 +370,7 @@ class _ScadaMaquinadosDashboardState extends State<ScadaMaquinadosDashboard> {
 
   Widget _kpiBox(String label, String value, Color color) => Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: color.withValues(alpha: 0.08), border: Border.all(color: color), borderRadius: BorderRadius.circular(6)), child: Column(mainAxisSize: MainAxisSize.min, children: [ Text(label, style: const TextStyle(color: kText, fontSize: 10)), const SizedBox(height: 2), Text(value, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.bold))]),);
 
-  Widget _buildDigitalTwin() => _panel(title: 'Gemelo Digital 2D  ·  Línea Indexada', titleColor: kMachine, height: 230, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: SizedBox(width: 900, height: 170, child: Stack(children: [ _dtBand('M1\nEntrada', _act('M1').on, left: 10, top: 100, w: 100), _dtSensorDot('P1', _sensor('P1').active, left: 50, top: 80), _dtPusher('M2\nEmpujador 1', _act('M2').on, left: 120, top: 50), _dtSensorDot('R1', _sensor('R1').active, left: 155, top: 30), _dtBand('M3\nBanda 2', _act('M3').on, left: 210, top: 100, w: 110), _dtSensorDot('P2', _sensor('P2').active, left: 255, top: 80), _dtMachine('M4\nFresadora', _act('M4').on, left: 330, top: 30), _dtSensorDot('P3', _sensor('P3').active, left: 372, top: 80), _dtBand('M6\nBanda 3', _act('M6').on, left: 440, top: 100, w: 100), _dtMachine('M5\nTaladradora', _act('M5').on, left: 550, top: 30), _dtSensorDot('P4', _sensor('P4').active, left: 592, top: 80), _dtPusher('M7\nEmpujador 2', _act('M7').on, left: 660, top: 50), _dtSensorDot('R2', _sensor('R2').active, left: 695, top: 30), _dtBand('M8\nSalida', _act('M8').on, left: 760, top: 100, w: 100), _dtSensorDot('P5', _sensor('P5').active, left: 805, top: 80), Positioned(left: 10, top: 130, right: 10, child: Container(height: 2, color: kBorder)), const Positioned(left: 420, top: 126, child: Icon(Icons.arrow_forward, color: kMachine, size: 18))]))));
+  Widget _buildDigitalTwin() => _panel(title: 'Gemelo Digital 2D  ·  Línea Indexada', titleColor: kMachine, height: 260, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: SizedBox(width: 900, height: 180, child: Stack(children: [ _dtBand('M1\nEntrada', _act('M1').on, left: 10, top: 100, w: 100), _dtSensorDot('P1', _sensor('P1').active, left: 50, top: 80), _dtPusher('M2\nEmpujador 1', _act('M2').on, left: 120, top: 50), _dtSensorDot('R1', _sensor('R1').active, left: 155, top: 30), _dtBand('M3\nBanda 2', _act('M3').on, left: 210, top: 100, w: 110), _dtSensorDot('P2', _sensor('P2').active, left: 255, top: 80), _dtMachine('M4\nFresadora', _act('M4').on, left: 330, top: 30), _dtSensorDot('P3', _sensor('P3').active, left: 372, top: 80), _dtBand('M6\nBanda 3', _act('M6').on, left: 440, top: 100, w: 100), _dtMachine('M5\nTaladradora', _act('M5').on, left: 550, top: 30), _dtSensorDot('P4', _sensor('P4').active, left: 592, top: 80), _dtPusher('M7\nEmpujador 2', _act('M7').on, left: 660, top: 50), _dtSensorDot('R2', _sensor('R2').active, left: 695, top: 30), _dtBand('M8\nSalida', _act('M8').on, left: 760, top: 100, w: 100), _dtSensorDot('P5', _sensor('P5').active, left: 805, top: 80), Positioned(left: 10, top: 130, right: 10, child: Container(height: 2, color: kBorder)), const Positioned(left: 420, top: 126, child: Icon(Icons.arrow_forward, color: kMachine, size: 18))]))));
 
   Widget _dtBand(String label, bool active, {required double left, required double top, double w = 80}) => Positioned(left: left, top: top, child: AnimatedContainer(duration: const Duration(milliseconds: 300), width: w, height: 40, alignment: Alignment.center, decoration: BoxDecoration(color: active ? kMachine.withValues(alpha: 0.2) : const Color(0xFF1A2233), border: Border.all(color: active ? kMachine : const Color(0xFF334455), width: 1.5), borderRadius: BorderRadius.circular(4), boxShadow: active ? [BoxShadow(color: kMachine.withValues(alpha: 0.4), blurRadius: 8)] : null), child: Text(label, textAlign: TextAlign.center, style: TextStyle(color: active ? kMachine : kText.withValues(alpha: 0.4), fontSize: 9, fontWeight: FontWeight.bold))));
 
@@ -442,7 +485,69 @@ class _ScadaMaquinadosDashboardState extends State<ScadaMaquinadosDashboard> {
                 inactiveTrackColor: const Color(0xFF333333)))
       ]));
 
-  Widget _buildAuditPanel() => _panel(title: 'Auditoría (Audit Trail) y Alertas', child: Container(height: 250, decoration: BoxDecoration(color: kBg, border: Border.all(color: kBorder), borderRadius: BorderRadius.circular(4)), padding: const EdgeInsets.all(8), child: ListView.builder(controller: _logScroll, itemCount: _logs.length, itemBuilder: (_, i) { final l = _logs[i]; return Padding(padding: const EdgeInsets.only(bottom: 2), child: RichText(text: TextSpan(style: const TextStyle(fontSize: 11, fontFamily: 'monospace'), children: [ TextSpan(text: '[${l.time}] ', style: const TextStyle(color: Color(0xFF546E7A))), TextSpan(text: '[${l.user}] - ', style: const TextStyle(color: kMachine)), TextSpan(text: l.message, style: TextStyle(color: l.color)) ]))); })));
+  Widget _buildAuditPanel() => _panel(
+      title: 'Auditoría (Audit Trail) y Alertas',
+      showClear: true,
+      onClear: () => setState(() => _logs.clear()),
+      isBusy: Provider.of<UsageMonitor>(context, listen: false)
+          .isStationActive('maquinados'),
+      child: Container(
+          height: 250,
+          decoration: BoxDecoration(
+              color: kBg, border: Border.all(color: kBorder), borderRadius: BorderRadius.circular(4)),
+          padding: const EdgeInsets.all(8),
+          child: ListView.builder(
+              controller: _logScroll,
+              itemCount: _logs.length,
+              itemBuilder: (_, i) {
+                final l = _logs[i];
+                return Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: RichText(
+                        text: TextSpan(
+                            style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                            children: [
+                          TextSpan(text: '[${l.time}] ', style: const TextStyle(color: Color(0xFF546E7A))),
+                          TextSpan(text: '[${l.user}] - ', style: const TextStyle(color: kMachine)),
+                          TextSpan(text: l.message, style: TextStyle(color: l.color))
+                        ])));
+              })));
 
-  Widget _panel({ required String title, required Widget child, double? height, Color titleColor = kMachine }) => Container(height: height, padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: kPanel, border: Border.all(color: kBorder), borderRadius: BorderRadius.circular(8)), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [ Container(padding: const EdgeInsets.only(bottom: 8), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kBorder))), child: Text(title, style: TextStyle(color: titleColor, fontSize: 12, fontWeight: FontWeight.bold))), const SizedBox(height: 8), child ]));
+  Widget _panel(
+          {required String title,
+          required Widget child,
+          double? height,
+          Color titleColor = kMachine,
+          bool showClear = false,
+          VoidCallback? onClear,
+          bool isBusy = false}) =>
+      Container(
+          height: height,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+              color: kPanel, border: Border.all(color: kBorder), borderRadius: BorderRadius.circular(8)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+            Container(
+                padding: const EdgeInsets.only(bottom: 8),
+                decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kBorder))),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(title, style: TextStyle(color: titleColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                    if (showClear && _logs.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: isBusy ? null : onClear,
+                        icon: const Icon(Icons.delete_sweep_rounded, size: 16),
+                        label: const Text('BORRAR', style: TextStyle(fontSize: 10)),
+                        style: TextButton.styleFrom(
+                          foregroundColor: kRed,
+                          disabledForegroundColor: const Color(0xFF555555),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                      ),
+                  ],
+                )),
+            const SizedBox(height: 8),
+            child
+          ]));
 }

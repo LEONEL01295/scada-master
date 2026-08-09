@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'usage_monitor.dart';
+import 'mqtt_placas_service.dart';
 
 // ── Paleta de Colores ──────────────────────────────────
 const Color kBg = Color(0xFF081014);
@@ -13,6 +14,7 @@ const Color kRedN = Color(0xFFFF3366);
 const Color kBorderN = Color(0xFF1A3644);
 const Color kText = Color(0xFFC5D1D8);
 const Color kAudit = Color(0xFFFFAA00);
+const Color kMuted = Color(0xFF64748B);
 
 class PanelGeneralScreen extends StatefulWidget {
   const PanelGeneralScreen({super.key});
@@ -23,6 +25,7 @@ class PanelGeneralScreen extends StatefulWidget {
 
 class _PanelGeneralScreenState extends State<PanelGeneralScreen> {
   String _mode = 'manual';
+  String _executionType = 'general'; // 'general', 'placa1', 'placa2'
   final TextEditingController _piezasController = TextEditingController(text: '1');
   int _piezasTerminadas = 0;
   bool _isCycleRunning = false;
@@ -59,29 +62,77 @@ class _PanelGeneralScreenState extends State<PanelGeneralScreen> {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
     monitor.setStationActive('general', true);
 
-    _logAudit("Iniciando ciclo supervisor...", kCyanN);
+    String executionMsg = "";
+    List<String> stations = [];
+    
+    if (_executionType == 'general') {
+      executionMsg = "EJECUCIÓN GENERAL (Toda la Planta)";
+      stations = ['robot', 'prensado', 'neumatico', 'maquinados'];
+    } else if (_executionType == 'placa1') {
+      executionMsg = "EJECUCIÓN PLACA 1 (Robot + Prensado)";
+      stations = ['robot', 'prensado'];
+    } else {
+      executionMsg = "EJECUCIÓN PLACA 2 (Neumático + Maquinados)";
+      stations = ['neumatico', 'maquinados'];
+    }
+
+    _logAudit("Iniciando $executionMsg...", kCyanN);
+
+    final mqtt = Provider.of<MqttPlacasService>(context, listen: false);
+    
+    // El Panel General ahora siempre dispara en Automático
+    if (_executionType == 'placa1') {
+      mqtt.enviarComando('start', 'placa1', target); 
+    } else if (_executionType == 'placa2') {
+      mqtt.enviarComando('start', 'placa2', target); 
+    } else {
+      mqtt.enviarComando('start', 'placa1', target);
+      mqtt.enviarComando('start', 'placa2', target);
+    }
 
     for (int i = 0; i < target; i++) {
       if (!_isCycleRunning) break;
-      await Future.delayed(const Duration(seconds: 2));
-      if (!_isCycleRunning) break;
       
+      // Limpiar auditoría local al iniciar cada nueva pieza para evitar acumulación
+      setState(() => _logs.clear());
+
+      _logAudit("--- Procesando ciclo ${i + 1} de $target ---", kAudit);
+      
+      for (String station in stations) {
+        if (!_isCycleRunning) break;
+        _logAudit("Activando estación: $station", kCyanN);
+        monitor.setStationActive(station, true);
+        
+        // Simulación de tiempo de proceso por estación
+        await Future.delayed(const Duration(seconds: 2));
+        
+        if (!_isCycleRunning) {
+          monitor.setStationActive(station, false);
+          break;
+        }
+        
+        monitor.addProduction(station);
+        monitor.setStationActive(station, false);
+        _logAudit("Estación $station completada", kGreenN);
+      }
+      
+      if (!_isCycleRunning) break;
       setState(() => _piezasTerminadas++);
       monitor.addProduction('general');
-      _logAudit("Pieza supervisor ${i+1} completada", kGreenN);
+      _logAudit("Ciclo $executionMsg pieza ${i+1} completada", kGreenN);
     }
 
     setState(() => _isCycleRunning = false);
     monitor.setStationActive('general', false);
-    _logAudit("Ciclo supervisor finalizado", kCyanN);
-    monitor.syncStationAuditoria('general'); // Sincronizar
+    _logAudit("Ciclo $executionMsg finalizado", kCyanN);
+    monitor.syncStationAuditoria('general');
   }
 
   void _emergencyStop() {
     setState(() => _isCycleRunning = false);
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
-    monitor.setStationActive('general', false);
-    monitor.addFailure('general');
+    // Sincronizar PARO DE EMERGENCIA con la placa
+    Provider.of<MqttPlacasService>(context, listen: false).stopEmergencia();
     _logAudit("¡PARO DE EMERGENCIA ACTIVADO!", kRedN);
   }
 
@@ -119,34 +170,15 @@ class _PanelGeneralScreenState extends State<PanelGeneralScreen> {
             runSpacing: 12,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              // Selector de Modo
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Modo: ', style: TextStyle(color: kText)),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: kCyanN),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _mode,
-                        dropdownColor: kPanel,
-                        style: const TextStyle(color: kCyanN, fontSize: 13),
-                        items: const [
-                          DropdownMenuItem(value: 'manual', child: Text('Manual (Simulación Física)')),
-                          DropdownMenuItem(value: 'auto', child: Text('Automático')),
-                        ],
-                        onChanged: (v) {
-                          setState(() => _mode = v!);
-                          _logAudit("Modo cambiado a $v", kAudit);
-                        },
-                      ),
-                    ),
-                  ),
-                ],
+              // El modo siempre es Automático en Panel General
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: kGreenN.withValues(alpha: 0.1),
+                  border: Border.all(color: kGreenN),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('MODO AUTOMÁTICO ACTIVO', style: TextStyle(color: kGreenN, fontSize: 12, fontWeight: FontWeight.bold)),
               ),
               // Input de Piezas
               Row(
@@ -171,6 +203,48 @@ class _PanelGeneralScreenState extends State<PanelGeneralScreen> {
                   ),
                 ],
               ),
+              const SizedBox(width: 8),
+              // KPI Piezas Compacto
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  border: Border.all(color: kGreenN.withValues(alpha: 0.5)),
+                  borderRadius: BorderRadius.circular(6),
+                  color: kGreenN.withValues(alpha: 0.05),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Terminadas: ', style: TextStyle(color: kText, fontSize: 11)),
+                    Text('$_piezasTerminadas', style: const TextStyle(color: kGreenN, fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          // Modos de Ejecución
+          const Text('Modo de Ejecución:', style: TextStyle(color: kMuted, fontSize: 12, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _modeSelectBtn(
+                label: "EJECUCIÓN GENERAL",
+                type: "general",
+                icon: Icons.all_inclusive_rounded,
+              ),
+              _modeSelectBtn(
+                label: "EJECUCIÓN PLACA 1",
+                type: "placa1",
+                icon: Icons.looks_one_rounded,
+              ),
+              _modeSelectBtn(
+                label: "EJECUCIÓN PLACA 2",
+                type: "placa2",
+                icon: Icons.looks_two_rounded,
+              ),
             ],
           ),
           const SizedBox(height: 20),
@@ -179,12 +253,20 @@ class _PanelGeneralScreenState extends State<PanelGeneralScreen> {
             spacing: 12,
             runSpacing: 12,
             children: [
-              _actionBtn(
-                icon: _isCycleRunning ? Icons.stop : Icons.play_arrow,
-                label: _isCycleRunning ? "EJECUTANDO..." : "INICIAR CICLO",
-                color: _isCycleRunning ? kGreenN.withValues(alpha: 0.2) : kGreenN,
-                textColor: _isCycleRunning ? kGreenN : Colors.black,
-                onTap: _mode == 'auto' ? _simularCicloGeneral : null,
+              Consumer<MqttPlacasService>(
+                builder: (context, mqtt, child) {
+                  return _actionBtn(
+                    icon: _isCycleRunning ? Icons.stop : Icons.play_arrow,
+                    label: _isCycleRunning ? "EJECUTANDO..." : "INICIAR CICLO",
+                    color: _isCycleRunning
+                        ? kGreenN.withValues(alpha: 0.2)
+                        : (mqtt.conectado ? kGreenN : Colors.grey),
+                    textColor: _isCycleRunning ? kGreenN : Colors.black,
+                    onTap: (!_isCycleRunning && mqtt.conectado)
+                        ? _simularCicloGeneral
+                        : null,
+                  );
+                },
               ),
               _actionBtn(
                 icon: Icons.warning_amber_rounded,
@@ -208,24 +290,35 @@ class _PanelGeneralScreenState extends State<PanelGeneralScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          // KPI Piezas
-          Container(
-            width: 140,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              border: Border.all(color: kGreenN.withValues(alpha: 0.5)),
-              borderRadius: BorderRadius.circular(6),
-              color: kGreenN.withValues(alpha: 0.05),
-            ),
-            child: Column(
-              children: [
-                const Text('Piezas Terminadas', style: TextStyle(color: kText, fontSize: 11)),
-                Text('$_piezasTerminadas', style: const TextStyle(color: kGreenN, fontSize: 24, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          )
         ],
+      ),
+    );
+  }
+
+  Widget _modeSelectBtn({required String label, required String type, required IconData icon}) {
+    final bool active = _executionType == type;
+    return InkWell(
+      onTap: _isCycleRunning ? null : () {
+        setState(() => _executionType = type);
+        _logAudit("Cambiado a modo de ejecución: $label", kAudit);
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: active ? kCyanN.withValues(alpha: 0.15) : Colors.black26,
+          border: Border.all(color: active ? kCyanN : kBorderN),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: active ? kCyanN : kText),
+            const SizedBox(width: 8),
+            Text(label, style: TextStyle(color: active ? kCyanN : kText, fontSize: 11, fontWeight: active ? FontWeight.bold : FontWeight.normal)),
+          ],
+        ),
       ),
     );
   }
@@ -255,7 +348,26 @@ class _PanelGeneralScreenState extends State<PanelGeneralScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Auditoría (Audit Trail) y Alertas', style: TextStyle(color: kCyanN, fontWeight: FontWeight.bold)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Auditoría (Audit Trail) y Alertas',
+                  style: TextStyle(color: kCyanN, fontWeight: FontWeight.bold)),
+              if (_logs.isNotEmpty)
+                TextButton.icon(
+                  onPressed: _isCycleRunning
+                      ? null
+                      : () => setState(() => _logs.clear()),
+                  icon: const Icon(Icons.delete_sweep_rounded, size: 16),
+                  label: const Text('BORRAR', style: TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(
+                    foregroundColor: kRedN,
+                    disabledForegroundColor: kMuted,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
           Container(
             height: 250,

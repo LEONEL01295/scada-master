@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:math';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'actividades_recientes.dart';
@@ -114,6 +116,12 @@ class UsuariosScreen extends StatefulWidget {
 
 class _UsuariosScreenState extends State<UsuariosScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final ScrollController _horizontalController = ScrollController();
+
+  // Gestión de datos local para evitar parpadeos
+  List<Usuario> _allUsers = [];
+  StreamSubscription? _usersSubscription;
+  bool _isLoading = true;
 
   // Filtros de texto
   final TextEditingController _nameController = TextEditingController();
@@ -141,9 +149,33 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     _phoneController.addListener(() => setState(() {}));
     _emailController.addListener(() => setState(() {}));
     _semestreController.addListener(() => setState(() {}));
-    
+
+    // Escuchar cambios en la nube en segundo plano
+    _initUsersListener();
+
     // EJECUTAR POBLAMIENTO DE DATOS DE PRUEBA (SOLO UNA VEZ)
     _poblarDatosDePrueba();
+  }
+
+  void _initUsersListener() {
+    _usersSubscription = _firestore
+        .collection('usuarios')
+        .snapshots()
+        .listen((QuerySnapshot snapshot) {
+      if (mounted) {
+        setState(() {
+          _allUsers = snapshot.docs
+              .map((doc) => Usuario.fromFirestore(doc))
+              .toList();
+          _isLoading = false;
+        });
+      }
+    }, onError: (error) {
+      debugPrint("Error cargando usuarios: $error");
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    });
   }
 
   Future<void> _poblarDatosDePrueba() async {
@@ -152,7 +184,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
       final random = Random();
       
       for (var doc in query.docs) {
-        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        Map<String, dynamic> data = doc.data();
         // Solo rellenamos si perfilCompleto es falso o los campos están vacíos
         if (data['perfilCompleto'] != true || data['numeroControl'] == null || data['numeroControl'] == '') {
           String sex = random.nextBool() ? 'Masculino' : 'Femenino';
@@ -182,6 +214,8 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     _phoneController.dispose();
     _emailController.dispose();
     _semestreController.dispose();
+    _horizontalController.dispose();
+    _usersSubscription?.cancel();
     super.dispose();
   }
 
@@ -230,82 +264,88 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     return Scaffold(
       backgroundColor: kBg,
       body: SafeArea(
-        child: StreamBuilder<QuerySnapshot>(
-          stream: _firestore.collection('usuarios').snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: kRed)));
-            }
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator(color: kBlue));
-            }
-
-            final List<Usuario> allUsersFromCloud = snapshot.data!.docs.map((doc) => Usuario.fromFirestore(doc)).toList();
-
-            final filteredUsers = allUsersFromCloud.where((u) {
-              // Si el botón de "Usuarios nuevos" está activo, ignoramos el resto de filtros y mostramos solo los Pendientes
-              if (_filterOnlyPending) return u.rol == 'Pendiente';
-
-              final matchesName = u.nombre.toLowerCase().contains(_nameController.text.toLowerCase());
-              final matchesControl = u.numeroControl.contains(_controlController.text);
-              final matchesPhone = u.numero.contains(_phoneController.text);
-              final matchesEmail = u.correo.toLowerCase().contains(_emailController.text.toLowerCase());
-              final matchesSemestre = _semestreController.text.isEmpty || u.semestre.toString() == _semestreController.text;
-              final matchesRol = _selectedRol == 'Todos' || u.rol == _selectedRol;
-              final matchesSexo = _selectedSexo == 'Todos' || u.sexo == _selectedSexo;
-              final matchesGrupo = _selectedGrupo == 'Todos' || u.grupo == _selectedGrupo;
-              
-              bool matchesEstado = true;
-              if (_selectedEstado == 'Activo') matchesEstado = u.enLinea;
-              if (_selectedEstado == 'Inactivo') matchesEstado = !u.enLinea;
-
-              bool matchesFechaReg = true;
-              if (_fechaRegistro != null) {
-                try {
-                  final regDate = DateFormat('dd/MM/yyyy').parse(u.fechaRegistro.split(' ')[0]);
-                  matchesFechaReg = regDate.year == _fechaRegistro!.year &&
-                                   regDate.month == _fechaRegistro!.month &&
-                                   regDate.day == _fechaRegistro!.day;
-                } catch (_) {
-                  matchesFechaReg = false;
-                }
-              }
-
-              bool matchesUltimoAcc = true;
-              if (_ultimoAcceso != null) {
-                try {
-                  final accDate = DateFormat('dd/MM/yyyy').parse(u.ultimoAcceso.split(' ')[0]);
-                  matchesUltimoAcc = accDate.year == _ultimoAcceso!.year &&
-                                    accDate.month == _ultimoAcceso!.month &&
-                                    accDate.day == _ultimoAcceso!.day;
-                } catch (_) {
-                  matchesUltimoAcc = false;
-                }
-              }
-
-              return matchesName && matchesControl && matchesPhone && 
-                     matchesEmail && matchesSemestre && matchesRol && 
-                     matchesSexo && matchesGrupo && matchesEstado &&
-                     matchesFechaReg && matchesUltimoAcc;
-            }).toList();
-
-            return SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(allUsersFromCloud),
-                  const SizedBox(height: 24),
-                  _buildFilterSection(),
-                  const SizedBox(height: 22),
-                  _buildTable(filteredUsers),
-                ],
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator(color: kBlue))
+            : SingleChildScrollView(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeader(_allUsers),
+                    const SizedBox(height: 24),
+                    _buildFilterSection(),
+                    const SizedBox(height: 22),
+                    _buildTableWithFilter(_allUsers),
+                  ],
+                ),
               ),
-            );
-          },
-        ),
       ),
     );
+  }
+
+  Widget _buildTableWithFilter(List<Usuario> allUsers) {
+    final filteredUsers = allUsers.where((u) {
+      // Si el botón de "Usuarios nuevos" está activo, ignoramos el resto de filtros y mostramos solo los Pendientes
+      if (_filterOnlyPending) return u.rol == 'Pendiente';
+
+      final matchesName = u.nombre
+          .toLowerCase()
+          .contains(_nameController.text.toLowerCase());
+      final matchesControl = u.numeroControl.contains(_controlController.text);
+      final matchesPhone = u.numero.contains(_phoneController.text);
+      final matchesEmail =
+          u.correo.toLowerCase().contains(_emailController.text.toLowerCase());
+      final matchesSemestre = _semestreController.text.isEmpty ||
+          u.semestre.toString() == _semestreController.text;
+      final matchesRol = _selectedRol == 'Todos' || u.rol == _selectedRol;
+      final matchesSexo = _selectedSexo == 'Todos' || u.sexo == _selectedSexo;
+      final matchesGrupo = _selectedGrupo == 'Todos' || u.grupo == _selectedGrupo;
+
+      bool matchesEstado = true;
+      if (_selectedEstado == 'Activo') matchesEstado = u.enLinea;
+      if (_selectedEstado == 'Inactivo') matchesEstado = !u.enLinea;
+
+      bool matchesFechaReg = true;
+      if (_fechaRegistro != null) {
+        try {
+          final regDate =
+              DateFormat('dd/MM/yyyy').parse(u.fechaRegistro.split(' ')[0]);
+          matchesFechaReg = regDate.year == _fechaRegistro!.year &&
+              regDate.month == _fechaRegistro!.month &&
+              regDate.day == _fechaRegistro!.day;
+        } catch (_) {
+          matchesFechaReg = false;
+        }
+      }
+
+      bool matchesUltimoAcc = true;
+      if (_ultimoAcceso != null) {
+        try {
+          final accDate =
+              DateFormat('dd/MM/yyyy').parse(u.ultimoAcceso.split(' ')[0]);
+          matchesUltimoAcc = accDate.year == _ultimoAcceso!.year &&
+              accDate.month == _ultimoAcceso!.month &&
+              accDate.day == _ultimoAcceso!.day;
+        } catch (_) {
+          matchesUltimoAcc = false;
+        }
+      }
+
+      return matchesName &&
+          matchesControl &&
+          matchesPhone &&
+          matchesEmail &&
+          matchesSemestre &&
+          matchesRol &&
+          matchesSexo &&
+          matchesGrupo &&
+          matchesEstado &&
+          matchesFechaReg &&
+          matchesUltimoAcc;
+    }).toList();
+
+    return _buildTable(filteredUsers);
   }
 
   Widget _buildHeader(List<Usuario> users) {
@@ -600,27 +640,45 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                   ),
                 ),
               )
-            : SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: 1600,
-                  height: 520,
-                  child: Column(
-                    children: [
-                      const _TableHeader(),
-                      const Divider(height: 1, color: kBorder),
-                      Expanded(
-                        child: ListView.separated(
-                          itemCount: users.length,
-                          separatorBuilder: (_, __) =>
-                              const Divider(height: 1, color: kBorder),
-                          itemBuilder: (_, i) => _UserRow(
-                            user: users[i],
-                            onDelete: () => _onDeleteTap(users[i].id),
-                          ),
+            : ScrollConfiguration(
+                behavior: ScrollConfiguration.of(context).copyWith(
+                  dragDevices: {
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,
+                  },
+                ),
+                child: Scrollbar(
+                  controller: _horizontalController,
+                  thumbVisibility: true,
+                  thickness: 8,
+                  radius: const Radius.circular(4),
+                  child: SingleChildScrollView(
+                    controller: _horizontalController,
+                    scrollDirection: Axis.horizontal,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: SizedBox(
+                        width: 1800,
+                        height: 520,
+                        child: Column(
+                          children: [
+                            const _TableHeader(),
+                            const Divider(height: 1, color: kBorder),
+                            Expanded(
+                              child: ListView.separated(
+                                itemCount: users.length,
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1, color: kBorder),
+                                itemBuilder: (_, i) => _UserRow(
+                                  user: users[i],
+                                  onDelete: () => _onDeleteTap(users[i].id),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),

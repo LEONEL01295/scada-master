@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'usage_monitor.dart';
+import 'mqtt_placas_service.dart';
 
 // ── Paleta Unificada (Basada en Neumático) ──────────────────────────────────
 const Color kBgP = Color(0xFF081014);
@@ -54,7 +55,6 @@ class ScadaPrensadoScreen extends StatefulWidget {
 }
 
 class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
-  String _clock = '';
   late Timer _clockTimer;
 
   final String _role = 'Ingeniero';
@@ -74,10 +74,10 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
   ];
 
   final List<_PActuatorModel> _actuators = [
-    _PActuatorModel('RLY01', 'RLY01', 'Punching Machine → Home Position (M1↑)'),
-    _PActuatorModel('RLY02', 'RLY02', 'Punching Machine → Work Position (M1↓)'),
-    _PActuatorModel('RLY03', 'RLY03', 'Conveyor Belt → Forward (M2)'),
-    _PActuatorModel('RLY04', 'RLY04', 'Conveyor Belt → Backward (M2)'),
+    _PActuatorModel('M2_FWD', 'Banda Adelante', 'Mover banda hacia adelante (Relé 5)'),
+    _PActuatorModel('M2_REV', 'Banda Atrás', 'Mover banda hacia atrás (Relé 4)'),
+    _PActuatorModel('M1_DWN', 'Prensa Abajo', 'Bajar prensa (Relé 7)'),
+    _PActuatorModel('M1_UP', 'Prensa Arriba', 'Subir prensa (Relé 6)'),
   ];
 
   final List<_PLogEntry> _logs = [];
@@ -98,11 +98,7 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
     _resetToHome(log: false);
   }
 
-  void _updateClock() {
-    final n = DateTime.now();
-    _clock =
-        '${n.hour.toString().padLeft(2, '0')}:${n.minute.toString().padLeft(2, '0')}:${n.second.toString().padLeft(2, '0')}';
-  }
+  void _updateClock() {}
 
   @override
   void dispose() {
@@ -154,13 +150,32 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
 
   void _toggleActuator(String id, bool val) {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
+    
     if (mounted) {
       setState(() {
         _act(id).on = val;
       });
+      
+      // MAPEO FÍSICO PLACA 1 (Centro de Prensado)
+      // Relé 4: Banda Reversa (0b11101111)
+      // Relé 5: Banda Adelante (0b11011111)
+      // Relé 6: Prensa Arriba (0b10111111)
+      // Relé 7: Prensa Abajo (0b01111111)
+      
+      int index = -1;
+      if (id == 'M2_FWD') index = 5;
+      if (id == 'M2_REV') index = 4;
+      if (id == 'M1_DWN') index = 7;
+      if (id == 'M1_UP') index = 6;
+
+      if (index != -1) {
+        placas.controlarActuador('prensado', index, val);
+      }
+
       if (!monitor.isStationActive('prensado')) {
         monitor.incrementComponentInteraction('prensado', 'actuador', id);
-        _log('Forzó $id a ${val ? 'ENCENDIDO' : 'APAGADO'}', _PLogType.audit);
+        _log('Enviado $id: ${val ? 'ON' : 'OFF'} a Placa 1', _PLogType.audit);
       }
     }
   }
@@ -209,6 +224,7 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
     }
     
     monitor.addFailure('prensado');
+    Provider.of<MqttPlacasService>(context, listen: false).stopEmergencia();
 
     _log('¡PARO DE EMERGENCIA ACTIVADO! Todos los actuadores apagados.', _PLogType.error);
     if (mounted) {
@@ -226,6 +242,8 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
 
   Future<void> _startAutoCycle() async {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
+    
     if (monitor.isStationActive('prensado')) return;
 
     final int numPiezas = int.tryParse(_piezasController.text) ?? 0;
@@ -234,21 +252,28 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
       return;
     }
 
-    if (!_sensor('S1').active) {
-      _log('FALLA ARRANQUE: Punzón no está en posición HOME (S1 inactivo).',
-          _PLogType.error);
+    // VERIFICACIÓN DE CONEXIÓN (Placa 1)
+    if (!placas.placa1.conectado) {
+      _log('ERROR: Placa 1 no conectada. Verifique diagnóstico.', _PLogType.error);
       return;
     }
     
     monitor.setStationActive('prensado', true);
     _updatePermissions();
 
-    _log('══ INICIANDO CICLO AUTOMÁTICO PARA $numPiezas PIEZAS ══', _PLogType.info);
+    // VINCULACIÓN HARDWARE: Enviar comando a la Placa 1
+    _log('══ ENVIANDO ORDEN A PLACA 1 ($numPiezas PIEZAS) ══', _PLogType.info);
+    placas.enviarComando('start', 'prensado', numPiezas);
 
     for (int i = 0; i < numPiezas; i++) {
       if (!monitor.isStationActive('prensado')) break;
+      
+      setState(() => _logs.clear());
       _log('--- Procesando pieza ${i + 1} de $numPiezas ---', _PLogType.info);
+      
+      // Simulación visual en Tablet mientras el hardware trabaja solo
       await _runSingleCycle();
+      
       if (!monitor.isStationActive('prensado')) {
         _log('Ciclo interrumpido por PARO DE EMERGENCIA.', _PLogType.error);
         break;
@@ -260,40 +285,48 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
     monitor.setStationActive('prensado', false);
     _updatePermissions();
     _log('══ CICLO AUTOMÁTICO FINALIZADO ══', _PLogType.info);
-    monitor.syncStationAuditoria('prensado'); // Sincronizar
+    monitor.syncStationAuditoria('prensado');
   }
 
   Future<void> _runSingleCycle() async {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
     try {
       if (!monitor.isStationActive('prensado') || !mounted) return;
-      _log('Avanzando banda de entrada...', _PLogType.info);
-      setState(() => _sensor('P1').active = true);
-      _toggleActuator('RLY03', true); await Future.delayed(const Duration(seconds: 2));
+      _log('Hardware: Iniciando alineación...', _PLogType.info);
+      setState(() => _act('M1_UP').on = true); await Future.delayed(const Duration(seconds: 1));
+      if (!monitor.isStationActive('prensado') || !mounted) return;
+      setState(() { _act('M1_UP').on = false; _sensor('S1').active = true; });
+      
+      _log('Hardware: Avanzando banda...', _PLogType.info);
+      setState(() { _act('M2_FWD').on = true; _sensor('P1').active = true; }); 
+      await Future.delayed(const Duration(seconds: 2));
       if (!monitor.isStationActive('prensado') || !mounted) return;
       setState(() { _sensor('P1').active = false; _sensor('P2').active = true; });
-      _toggleActuator('RLY03', false); await Future.delayed(const Duration(milliseconds: 500));
+      setState(() => _act('M2_FWD').on = false); await Future.delayed(const Duration(milliseconds: 500));
+      
       if (!monitor.isStationActive('prensado') || !mounted) return;
-      _log('Iniciando prensado (Punzón bajando)...', _PLogType.info);
-      setState(() => _sensor('S1').active = false);
-      _toggleActuator('RLY02', true); await Future.delayed(const Duration(seconds: 2));
+      _log('Hardware: Bajando prensa...', _PLogType.info);
+      setState(() { _sensor('S1').active = false; _act('M1_DWN').on = true; }); 
+      await Future.delayed(const Duration(seconds: 2));
       if (!monitor.isStationActive('prensado') || !mounted) return;
-      setState(() => _sensor('S2').active = true);
-      _toggleActuator('RLY02', false); await Future.delayed(const Duration(seconds: 1));
+      setState(() { _sensor('S2').active = true; _act('M1_DWN').on = false; }); 
+      await Future.delayed(const Duration(seconds: 1));
+      
       if (!monitor.isStationActive('prensado') || !mounted) return;
-      _log('Elevando punzón...', _PLogType.info);
-      setState(() => _sensor('S2').active = false);
-      _toggleActuator('RLY01', true); await Future.delayed(const Duration(seconds: 2));
+      _log('Hardware: Subiendo prensa...', _PLogType.info);
+      setState(() { _sensor('S2').active = false; _act('M1_UP').on = true; }); 
+      await Future.delayed(const Duration(seconds: 2));
       if (!monitor.isStationActive('prensado') || !mounted) return;
-      setState(() => _sensor('S1').active = true);
-      _toggleActuator('RLY01', false); await Future.delayed(const Duration(milliseconds: 500));
+      setState(() { _sensor('S1').active = true; _act('M1_UP').on = false; }); 
+      await Future.delayed(const Duration(milliseconds: 500));
+      
       if (!monitor.isStationActive('prensado') || !mounted) return;
-      _log('Expulsando pieza terminada...', _PLogType.info);
-      _toggleActuator('RLY03', true); await Future.delayed(const Duration(seconds: 2));
+      _log('Hardware: Reversa banda...', _PLogType.info);
+      setState(() => _act('M2_REV').on = true); await Future.delayed(const Duration(seconds: 2));
       if (!monitor.isStationActive('prensado') || !mounted) return;
       setState(() => _sensor('P2').active = false);
-      _toggleActuator('RLY03', false);
-      _log('✔ CICLO EXITOSO.', _PLogType.success);
+      setState(() => _act('M2_REV').on = false);
+      _log('✔ PIEZA FINALIZADA EN HARDWARE', _PLogType.success);
     } catch (_) {
       _log('Error en secuencia automática.', _PLogType.error);
     }
@@ -357,15 +390,28 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
           _updatePermissions();
         }),
         _buildPiezasInput(isRunning),
-        ElevatedButton.icon(
-          onPressed: (_mode == 'auto' && !isRunning) ? _startAutoCycle : null,
-          icon: Icon(isRunning ? Icons.hourglass_top_rounded : Icons.play_circle_filled_rounded, size: 16),
-          label: Text(isRunning ? 'PROCESANDO...' : 'INICIAR CICLO'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: kGreenP, foregroundColor: Colors.black,
-            disabledBackgroundColor: const Color(0xFF333333), disabledForegroundColor: const Color(0xFF666666),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          ),
+        Consumer<MqttPlacasService>(
+          builder: (context, mqtt, child) {
+            return ElevatedButton.icon(
+              onPressed: (_mode == 'auto' && !isRunning && mqtt.conectado)
+                  ? _startAutoCycle
+                  : null,
+              icon: Icon(
+                  isRunning
+                      ? Icons.hourglass_top_rounded
+                      : Icons.play_circle_filled_rounded,
+                  size: 16),
+              label: Text(isRunning ? 'PROCESANDO...' : 'INICIAR CICLO'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: mqtt.conectado ? kGreenP : Colors.grey,
+                foregroundColor: Colors.black,
+                disabledBackgroundColor: const Color(0xFF333333),
+                disabledForegroundColor: const Color(0xFF666666),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+            );
+          },
         ),
         ElevatedButton.icon(
           onPressed: _triggerEmergency,
@@ -459,7 +505,7 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
             alignment: Alignment.center,
             children: [
               Positioned(left: 50, top: 220, right: 50, child: Container(height: 15, decoration: BoxDecoration(color: kBorderP, borderRadius: BorderRadius.circular(2)))),
-              Positioned(left: 80, bottom: 85, child: AnimatedContainer(duration: const Duration(milliseconds: 300), width: 340, height: 10, decoration: BoxDecoration(color: _act('RLY03').on ? kMachineP : Colors.grey[800], borderRadius: BorderRadius.circular(5)))),
+              Positioned(left: 80, bottom: 85, child: AnimatedContainer(duration: const Duration(milliseconds: 300), width: 340, height: 10, decoration: BoxDecoration(color: _act('M2_FWD').on ? kMachineP : Colors.grey[800], borderRadius: BorderRadius.circular(5)))),
               Positioned(top: 30, child: Container(width: 120, height: 10, color: kBorderP)),
               Positioned(top: 40, child: Container(width: 10, height: 180, color: kBorderP)),
               Positioned(top: 40 + (1 - (_sensor('S1').active ? 1 : (_sensor('S2').active ? 0 : 0.5))) * 120, child: AnimatedContainer(duration: const Duration(milliseconds: 500), width: 80, height: 40, decoration: BoxDecoration(color: kPanelP, border: Border.all(color: kMachineP, width: 2), borderRadius: BorderRadius.circular(4)), child: Center(child: Text('M1', style: TextStyle(color: kMachineP, fontWeight: FontWeight.bold))))),
@@ -472,6 +518,9 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
 
   Widget _buildAuditPanel() => _panel(
     title: 'Auditoría (Audit Trail) y Alertas',
+    showClear: true,
+    onClear: () => setState(() => _logs.clear()),
+    isBusy: Provider.of<UsageMonitor>(context, listen: false).isStationActive('prensado'),
     child: Container(
       height: 180, decoration: BoxDecoration(color: kBgP, border: Border.all(color: kBorderP), borderRadius: BorderRadius.circular(4)),
       padding: const EdgeInsets.all(10),
@@ -537,18 +586,55 @@ class _ScadaPrensadoState extends State<ScadaPrensadoScreen> {
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
     decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(6), border: Border.all(color: a.on ? kMachineP.withValues(alpha: 0.4) : Colors.transparent)),
     child: Row(children: [
-      Expanded(child: Text(a.id, style: TextStyle(color: a.on ? kMachineP : kTextP, fontSize: 12, fontWeight: FontWeight.bold))),
+      Expanded(child: Text(a.label, style: TextStyle(color: a.on ? kMachineP : kTextP, fontSize: 12, fontWeight: FontWeight.bold))),
       Transform.scale(scale: 0.8, child: Switch(value: a.on, onChanged: a.disabled ? null : (v) => _toggleActuator(a.id, v), activeTrackColor: kMachineP, activeThumbColor: Colors.white, inactiveTrackColor: const Color(0xFF333333))),
     ]),
   );
 
-  Widget _panel({required String title, required Widget child}) => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(color: kPanelP, border: Border.all(color: kBorderP), borderRadius: BorderRadius.circular(8)),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-      Container(padding: const EdgeInsets.only(bottom: 6), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kBorderP))), child: Text(title, style: const TextStyle(color: kMachineP, fontSize: 12, fontWeight: FontWeight.bold))),
-      const SizedBox(height: 8),
-      child,
-    ]),
-  );
+  Widget _panel(
+          {required String title,
+          required Widget child,
+          bool showClear = false,
+          VoidCallback? onClear,
+          bool isBusy = false}) =>
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: kPanelP,
+            border: Border.all(color: kBorderP),
+            borderRadius: BorderRadius.circular(8)),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  decoration: const BoxDecoration(
+                      border: Border(bottom: BorderSide(color: kBorderP))),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(
+                              color: kMachineP,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold)),
+                      if (showClear && _logs.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: isBusy ? null : onClear,
+                          icon: const Icon(Icons.delete_sweep_rounded, size: 16),
+                          label: const Text('BORRAR',
+                              style: TextStyle(fontSize: 10)),
+                          style: TextButton.styleFrom(
+                            foregroundColor: kRedP,
+                            disabledForegroundColor: const Color(0xFF555555),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
+                    ],
+                  )),
+              const SizedBox(height: 8),
+              child,
+            ]),
+      );
 }

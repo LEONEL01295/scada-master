@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'usage_monitor.dart';
+import 'mqtt_placas_service.dart';
 
 // ── Paleta Unificada (Basada en Neumático) ──────────────────────────────────
 const Color kBg = Color(0xFF081014);
@@ -66,7 +67,6 @@ class ScadaRobotDashboard extends StatefulWidget {
 
 class _ScadaDashboardState extends State<ScadaRobotDashboard>
     with SingleTickerProviderStateMixin {
-  String _clock = '';
   late Timer _clockTimer;
   late AnimationController _rotAnim;
 
@@ -90,14 +90,14 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
   ];
 
   final List<ActuatorModel> _actuators = [
-    ActuatorModel('RLY01', 'RLY01', 'Base CW'),
-    ActuatorModel('RLY02', 'RLY02', 'Base CCW'),
-    ActuatorModel('RLY03', 'RLY03', 'Expandir Brazo'),
-    ActuatorModel('RLY04', 'RLY04', 'Retraer Brazo'),
-    ActuatorModel('RLY05', 'RLY05', 'Eje Z Arriba'),
-    ActuatorModel('RLY06', 'RLY06', 'Eje Z Abajo'),
-    ActuatorModel('RLY07', 'RLY07', 'Abrir Gripper'),
-    ActuatorModel('RLY08', 'RLY08', 'Cerrar Gripper'),
+    ActuatorModel('IZQUIERDA', 'Izquierda', 'Giro Base Izquierda (Relé 7)'),
+    ActuatorModel('DERECHA', 'Derecha', 'Giro Base Derecha (Relé 6)'),
+    ActuatorModel('ARRIBA', 'Arriba', 'Eje Z Arriba (Relé 3)'),
+    ActuatorModel('ABAJO', 'Abajo', 'Eje Z Abajo (Relé 2)'),
+    ActuatorModel('ATRAS', 'Atrás', 'Brazo Atrás (Relé 4)'),
+    ActuatorModel('ADELANTE', 'Adelante', 'Brazo Adelante (Relé 5)'),
+    ActuatorModel('ABRIR', 'Abrir Pinza', 'Abrir Gripper (Relé 1)'),
+    ActuatorModel('CERRAR', 'Cerrar Pinza', 'Cerrar Gripper (Relé 0)'),
   ];
 
   final List<LogEntry> _logs = [];
@@ -111,7 +111,7 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
     super.initState();
     _updateClock();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if(mounted) setState(_updateClock);
+      if(mounted) setState(() {});
     });
     _rotAnim = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 800));
@@ -120,11 +120,7 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
     _resetToHome(log: false);
   }
 
-  void _updateClock() {
-    final n = DateTime.now();
-    _clock =
-    '${n.hour.toString().padLeft(2, '0')}:${n.minute.toString().padLeft(2, '0')}:${n.second.toString().padLeft(2, '0')}';
-  }
+  void _updateClock() {}
 
   @override
   void dispose() {
@@ -195,12 +191,39 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
 
   void _toggleActuator(String id, bool val) {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
+    final placas = Provider.of<MqttPlacasService>(context, listen: false);
+    
     if(mounted) {
       setState(() => _act(id).on = val);
       _updateRobotVisuals(id, val);
+
+      // MAPEO FÍSICO PLACA 1 (Robot 3 Ejes)
+      // Relé 7: Izquierda (0b01111111)
+      // Relé 6: Derecha (0b10111111)
+      // Relé 4: Atrás (0b11101111)
+      // Relé 5: Adelante (0b11011111)
+      // Relé 3: Arriba (0b11110111)
+      // Relé 2: Abajo (0b11111011)
+      // Relé 0: Cerrar (0b11111110)
+      // Relé 1: Abrir (0b11111101)
+
+      int index = -1;
+      if (id == 'IZQUIERDA') index = 7;
+      if (id == 'DERECHA') index = 6;
+      if (id == 'ATRAS') index = 4;
+      if (id == 'ADELANTE') index = 5;
+      if (id == 'ARRIBA') index = 3;
+      if (id == 'ABAJO') index = 2;
+      if (id == 'CERRAR') index = 0;
+      if (id == 'ABRIR') index = 1;
+
+      if (index != -1) {
+        placas.controlarActuador('robot', index, val);
+      }
+
       if (!monitor.isStationActive('robot')) {
         monitor.incrementComponentInteraction('robot', 'actuador', id);
-        _logAudit('Forzó $id a ${val ? 'ENCENDIDO' : 'APAGADO'}', LogType.audit);
+        _logAudit('Enviado $id: ${val ? 'ON' : 'OFF'} a Placa 1', LogType.audit);
       }
     }
   }
@@ -209,14 +232,14 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
     if(mounted) {
       setState(() {
         switch (id) {
-          case 'RLY01': if (val) _baseAngle = (_baseAngle + 45) % 360; break;
-          case 'RLY02': if (val) _baseAngle = (_baseAngle - 45 + 360) % 360; break;
-          case 'RLY03': _armExtend = val ? 1.0 : _armExtend; break;
-          case 'RLY04': _armExtend = val ? 0.0 : _armExtend; break;
-          case 'RLY05': _zPosition = val ? 0.0 : _zPosition; break;
-          case 'RLY06': _zPosition = val ? 1.0 : _zPosition; break;
-          case 'RLY07': _gripperClosed = false; break;
-          case 'RLY08': _gripperClosed = true; break;
+          case 'IZQUIERDA': if (val) _baseAngle = (_baseAngle - 45 + 360) % 360; break;
+          case 'DERECHA': if (val) _baseAngle = (_baseAngle + 45) % 360; break;
+          case 'ADELANTE': _armExtend = val ? 1.0 : _armExtend; break;
+          case 'ATRAS': _armExtend = val ? 0.0 : _armExtend; break;
+          case 'ARRIBA': _zPosition = val ? 0.0 : _zPosition; break;
+          case 'ABAJO': _zPosition = val ? 1.0 : _zPosition; break;
+          case 'ABRIR': _gripperClosed = false; break;
+          case 'CERRAR': _gripperClosed = true; break;
         }
       });
     }
@@ -255,6 +278,7 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
     }
 
     monitor.addFailure('robot');
+    Provider.of<MqttPlacasService>(context, listen: false).stopEmergencia();
 
     _logAudit('¡PARO DE EMERGENCIA ACTIVADO! Todos los actuadores apagados.', LogType.error);
     if(mounted) {
@@ -284,9 +308,17 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
     monitor.setStationActive('robot', true);
     _updatePermissions();
 
+    // VINCULACIÓN HARDWARE: Enviar comando a la placa
+    final mqtt = Provider.of<MqttPlacasService>(context, listen: false);
+    mqtt.enviarComando('start', 'robot', numPiezas);
+
     _logAudit('══ INICIANDO CICLO AUTOMÁTICO PARA $numPiezas CICLOS ══', LogType.info);
     for (int i = 0; i < numPiezas; i++) {
       if (!monitor.isStationActive('robot')) break;
+      
+      // Limpiar auditoría local al iniciar cada nueva pieza para evitar acumulación
+      setState(() => _logs.clear());
+
       _logAudit('--- Ejecutando Pick & Place ${i + 1} de $numPiezas ---', LogType.info);
       await _runSingleCycle();
       if (!monitor.isStationActive('robot')) {
@@ -358,9 +390,9 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
   Widget _buildHeader() => Container(
     padding: const EdgeInsets.only(bottom: 10),
     decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kMachine, width: 2))),
-    child: Row(
+    child: const Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: const [
+      children: [
         Text('ROBOT 3 EJES', style: TextStyle(color: kMachine, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.4)),
       ],
     ),
@@ -382,15 +414,28 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
           _updatePermissions();
         }),
         _buildPiezasInput(isRunning),
-        ElevatedButton.icon(
-          onPressed: (_mode == 'auto' && !isRunning) ? _startAutoCycle : null,
-          icon: Icon(isRunning ? Icons.hourglass_top_rounded : Icons.smart_toy_rounded, size: 16),
-          label: Text(isRunning ? 'PROCESANDO...' : 'INICIAR CICLO'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: kGreen, foregroundColor: Colors.black,
-            disabledBackgroundColor: const Color(0xFF333333), disabledForegroundColor: const Color(0xFF666666),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          ),
+        Consumer<MqttPlacasService>(
+          builder: (context, mqtt, child) {
+            return ElevatedButton.icon(
+              onPressed: (_mode == 'auto' && !isRunning && mqtt.conectado)
+                  ? _startAutoCycle
+                  : null,
+              icon: Icon(
+                  isRunning
+                      ? Icons.hourglass_top_rounded
+                      : Icons.smart_toy_rounded,
+                  size: 16),
+              label: Text(isRunning ? 'PROCESANDO...' : 'INICIAR CICLO'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: mqtt.conectado ? kGreen : Colors.grey,
+                foregroundColor: Colors.black,
+                disabledBackgroundColor: const Color(0xFF333333),
+                disabledForegroundColor: const Color(0xFF666666),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+            );
+          },
         ),
         ElevatedButton.icon(
           onPressed: _triggerEmergency,
@@ -531,6 +576,9 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
 
   Widget _buildAuditPanel() => _panel(
     title: 'Auditoría (Audit Trail) y Alertas',
+    showClear: true,
+    onClear: () => setState(() => _logs.clear()),
+    isBusy: Provider.of<UsageMonitor>(context, listen: false).isStationActive('robot'),
     child: Container(
       height: 180, decoration: BoxDecoration(color: kBg, border: Border.all(color: kBorder), borderRadius: BorderRadius.circular(4)),
       padding: const EdgeInsets.all(10),
@@ -616,15 +664,52 @@ class _ScadaDashboardState extends State<ScadaRobotDashboard>
     ]),
   );
 
-  Widget _panel({required String title, required Widget child}) => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(color: kPanel, border: Border.all(color: kBorder), borderRadius: BorderRadius.circular(8)),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-      Container(padding: const EdgeInsets.only(bottom: 6), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kBorder))), child: Text(title, style: const TextStyle(color: kMachine, fontSize: 12, fontWeight: FontWeight.bold))),
-      const SizedBox(height: 8),
-      child,
-    ]),
-  );
+  Widget _panel(
+          {required String title,
+          required Widget child,
+          bool showClear = false,
+          VoidCallback? onClear,
+          bool isBusy = false}) =>
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: kPanel,
+            border: Border.all(color: kBorder),
+            borderRadius: BorderRadius.circular(8)),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  decoration: const BoxDecoration(
+                      border: Border(bottom: BorderSide(color: kBorder))),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(
+                              color: kMachine,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold)),
+                      if (showClear && _logs.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: isBusy ? null : onClear,
+                          icon: const Icon(Icons.delete_sweep_rounded, size: 16),
+                          label: const Text('BORRAR',
+                              style: TextStyle(fontSize: 10)),
+                          style: TextButton.styleFrom(
+                            foregroundColor: kRed,
+                            disabledForegroundColor: const Color(0xFF555555),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                        ),
+                    ],
+                  )),
+              const SizedBox(height: 8),
+              child,
+            ]),
+      );
 }
 
 class _GridPainter extends CustomPainter {

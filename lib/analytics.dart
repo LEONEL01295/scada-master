@@ -118,12 +118,82 @@ class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
     );
   }
 
+  Future<void> _selectDateRange() async {
+    // 1. Seleccionar Fecha Inicial
+    final DateTime? start = await showDatePicker(
+      context: context,
+      initialDate: _selectedDateRange.start,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      helpText: 'SELECCIONA FECHA INICIAL',
+      initialEntryMode: DatePickerEntryMode.calendarOnly,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppColors.blue,
+              onPrimary: Colors.white,
+              surface: AppColors.card,
+              onSurface: Colors.white,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: AppColors.bg,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (start == null) return;
+
+    // 2. Seleccionar Fecha Final
+    if (!mounted) return;
+    final DateTime? end = await showDatePicker(
+      context: context,
+      initialDate:
+          start.isAfter(_selectedDateRange.end) ? start : _selectedDateRange.end,
+      firstDate: start, // No puede ser antes de la fecha inicial
+      lastDate: DateTime.now(),
+      helpText: 'SELECCIONA FECHA FINAL',
+      initialEntryMode: DatePickerEntryMode.calendarOnly,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppColors.blue,
+              onPrimary: Colors.white,
+              surface: AppColors.card,
+              onSurface: Colors.white,
+            ),
+            dialogTheme: const DialogThemeData(
+              backgroundColor: AppColors.bg,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (end != null) {
+      setState(() {
+        _selectedDateRange = DateTimeRange(start: start, end: end);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final usageMonitor = Provider.of<UsageMonitor>(context);
     final displayData = _buildDisplayData(usageMonitor);
     final days = _selectedDateRange.duration.inDays + 1;
-    final dateLabels = List.generate(days, (i) => DateFormat('dd/MM').format(_selectedDateRange.start.add(Duration(days: i))));
+    final dateLabels = List.generate(
+        days,
+        (i) => DateFormat('dd/MM')
+            .format(_selectedDateRange.start.add(Duration(days: i))));
+
+    final String dateRangeText =
+        "${DateFormat('dd/MM').format(_selectedDateRange.start)} - ${DateFormat('dd/MM').format(_selectedDateRange.end)}";
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -131,16 +201,39 @@ class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
         builder: (context, constraints) {
           final r = R(constraints.maxWidth);
           return SingleChildScrollView(
-            padding: EdgeInsets.symmetric(horizontal: r.hPad, vertical: r.scale(24)),
+            padding:
+                EdgeInsets.symmetric(horizontal: r.hPad, vertical: r.scale(24)),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 16,
+                  runSpacing: 16,
                   children: [
-                    const Text('Análisis de Planta', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                    Row(
+                    const Text('Análisis de Planta',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold)),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
+                        // Selector de Rango de Fechas
+                        ElevatedButton.icon(
+                          onPressed: _selectDateRange,
+                          icon: const Icon(Icons.calendar_today_rounded,
+                              size: 16),
+                          label: Text(dateRangeText),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.card,
+                            foregroundColor: Colors.white,
+                            side: const BorderSide(color: AppColors.border),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                          ),
+                        ),
                         ElevatedButton.icon(
                           onPressed: () => showDialog(
                             context: context,
@@ -153,14 +246,23 @@ class _AnalyticsDashboardState extends State<AnalyticsDashboard> {
                           ),
                           icon: const Icon(Icons.table_chart_rounded, size: 16),
                           label: const Text('Excel'),
-                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.green, foregroundColor: Colors.white),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.green,
+                              foregroundColor: Colors.white),
                         ),
-                        const SizedBox(width: 12),
                         ElevatedButton.icon(
-                          onPressed: () => showDialog(context: context, builder: (_) => GenerarReporteDialog(maqueta: displayData.name, dateRange: _selectedDateRange, data: displayData, dateLabels: dateLabels)),
+                          onPressed: () => showDialog(
+                              context: context,
+                              builder: (_) => GenerarReporteDialog(
+                                  maqueta: displayData.name,
+                                  dateRange: _selectedDateRange,
+                                  data: displayData,
+                                  dateLabels: dateLabels)),
                           icon: const Icon(Icons.download_rounded, size: 16),
                           label: const Text('Reporte'),
-                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.blue, foregroundColor: Colors.white),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.blue,
+                              foregroundColor: Colors.white),
                         ),
                       ],
                     ),
