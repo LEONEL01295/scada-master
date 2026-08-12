@@ -396,7 +396,7 @@ footer p{font-size:13px;color:var(--text3)}
       <div class="install-block windows-block">
         <div class="install-header windows-h"><span style="font-size:24px">🪟</span><div><h4>Instalación en Windows</h4><span>Archivo ZIP · Carpeta portable</span></div><span class="install-os-badge windows-badge" style="margin-left:auto">Win 10/11</span></div>
         <div class="install-steps">
-          <div class="step-row"><div class="step-num done">1</div><div class="step-content"><h5>Descargar el archivo ZIP</h5><p>Haz clic en <strong>Descargar instalador (.zip)</strong>. El archivo <code>SCADA-Master-Windows-v1.0.3.zip</code> se guardará en tu carpeta de descargas.</p></div></div>
+          <div class="step-row"><div class="step-num done">1</div><div class="step-content"><h5>Descargar el archivo ZIP</h5><p>Haz clic en <strong>Descargar instalador (.zip)</strong>. El archivo <code>SCADA-Master-Windows-v1.0.4.zip</code> se guardará en tu carpeta de descargas.</p></div></div>
           <div class="step-row"><div class="step-num done">2</div><div class="step-content"><h5>Extraer el contenido</h5><p>Haz clic derecho sobre el archivo descargado y selecciona <strong>"Extraer todo..."</strong>. Elige una carpeta de destino (por ejemplo, Escritorio).</p></div></div>
           <div class="step-row"><div class="step-num done">3</div><div class="step-content"><h5>Pasar SmartScreen (si aparece)</h5><p>Al ejecutar <code>analytics_dashboard.exe</code> dentro de la carpeta extraída, Windows Defender SmartScreen puede mostrar una advertencia. Haz clic en <strong>"Más información"</strong> y luego en <strong>"Ejecutar de todas formas"</strong>.</p><div class="step-warning">⚠ Este aviso aparece porque el ejecutable no tiene firma digital comercial, no porque sea peligroso.</div></div></div>
           <div class="step-row"><div class="step-num">4</div><div class="step-content"><h5>Ejecutar la aplicación</h5><p>Dentro de la carpeta extraída, ejecuta <code>analytics_dashboard.exe</code>. No muevas ni borres los demás archivos/DLLs de la carpeta, son necesarios para que la app funcione.</p></div></div>
@@ -464,7 +464,7 @@ footer p{font-size:13px;color:var(--text3)}
   // ── 3. LINKS DE DESCARGA DIRECTA (v1.0.2) ────────────────────
   const downloadURLs = {
     android: "https://github.com/LEONEL01295/scada-master/releases/download/v1.0.4/app-arm64-v8a-release.apk",
-    windows: "SCADA-Master-Windows-v1.0.3.zip"
+    windows: "SCADA-Master-Windows-v1.0.4.zip"
   };
 
   // ── 4. ACTIVAR BOTONES DISPONIBLES ───────────────────────────
@@ -503,7 +503,7 @@ footer p{font-size:13px;color:var(--text3)}
     // Iniciar descarga directa
     const a = document.createElement('a');
     a.href = url;
-    a.setAttribute('download', platform === 'android' ? 'SCADA-Master.apk' : 'SCADA-Master-Windows-v1.0.3.zip');
+    a.setAttribute('download', platform === 'android' ? 'SCADA-Master.apk' : 'SCADA-Master-Windows-v1.0.4.zip');
     a.setAttribute('target', '_blank');
     a.setAttribute('rel', 'noopener noreferrer');
     document.body.appendChild(a);
@@ -560,6 +560,7 @@ footer p{font-size:13px;color:var(--text3)}
 
 </body>
 </html>
+
 
 
 
