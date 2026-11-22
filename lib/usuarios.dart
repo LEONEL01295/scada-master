@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -33,12 +32,12 @@ class Usuario {
   final String ultimoAcceso;
   final String fechaRegistro;
   final String numeroControl;
-  final int? semestre; // Ahora opcional
+  final int? semestre;
   final bool activo;
   final String sexo;
   final String grupo;
   final bool enLinea;
-  final bool perfilCompleto; // Nueva propiedad
+  final bool perfilCompleto;
 
   Usuario({
     required this.id,
@@ -62,7 +61,6 @@ class Usuario {
     final Map<String, dynamic> data = (doc.data() as Map<String, dynamic>?) ?? {};
     bool completo = data['perfilCompleto'] == true || data['perfilCompleto'] == 'true';
 
-    // Conversión segura de semestre (puede venir como String o int de Firestore)
     int? parsedSemestre;
     var rawSemestre = data['semestre'];
     if (rawSemestre is int) {
@@ -90,9 +88,9 @@ class Usuario {
       ultimoAcceso: parseFecha(data['ultimoAcceso']),
       semestre: completo ? (parsedSemestre ?? 1) : null,
       fechaRegistro: parseFecha(data['fechaRegistro']),
-      numeroControl: completo ? (data['numeroControl']?.toString() ?? '') : '',
-      sexo: completo ? (data['sexo']?.toString() ?? 'Masculino') : '',
-      grupo: completo ? (data['grupo']?.toString() ?? 'Grupo A') : '',
+      numeroControl: data['numeroControl']?.toString() ?? '',
+      sexo: data['sexo']?.toString() ?? 'Masculino',
+      grupo: data['grupo']?.toString() ?? 'Grupo A',
       enLinea: data['enLinea'] == true || data['enLinea'] == 'true' || data['enLinea'] == 1,
       perfilCompleto: completo,
     );
@@ -126,23 +124,19 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final ScrollController _horizontalController = ScrollController();
 
-  // Gestión de datos local para evitar parpadeos
   List<Usuario> _allUsers = [];
   StreamSubscription? _usersSubscription;
   bool _isLoading = true;
 
-  // Filtros de texto
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _controlController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _semestreController = TextEditingController();
 
-  // Filtros de fecha
   DateTime? _fechaRegistro;
   DateTime? _ultimoAcceso;
 
-  // Filtros de Selección
   String _selectedRol = 'Todos';
   String _selectedSexo = 'Todos';
   String _selectedGrupo = 'Todos';
@@ -230,7 +224,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     _emailController.addListener(() => setState(() {}));
     _semestreController.addListener(() => setState(() {}));
 
-    // Timer de seguridad: si Firestore tarda más de 1.5s (offline/conectar), muestra la pantalla
     _loadingTimer = Timer(const Duration(milliseconds: 1500), () {
       if (mounted && _isLoading) {
         setState(() {
@@ -242,11 +235,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
       }
     });
 
-    // Escuchar cambios en la nube en segundo plano
     _initUsersListener();
-
-    // EJECUTAR POBLAMIENTO DE DATOS DE PRUEBA
-    _poblarDatosDePrueba();
   }
 
   void _initUsersListener() {
@@ -302,34 +291,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
           _isLoading = false;
         });
       }
-    }
-  }
-
-  Future<void> _poblarDatosDePrueba() async {
-    try {
-      final query = await _firestore.collection('usuarios').get().timeout(const Duration(seconds: 3));
-      final random = Random();
-      
-      for (var doc in query.docs) {
-        Map<String, dynamic> data = doc.data();
-        if (data['perfilCompleto'] != true || data['numeroControl'] == null || data['numeroControl'] == '') {
-          String sex = random.nextBool() ? 'Masculino' : 'Femenino';
-          String grp = random.nextBool() ? 'Grupo A' : 'Grupo B';
-          int sem = random.nextInt(8) + 1;
-          String ctrl = (random.nextInt(90000000) + 10000000).toString(); 
-
-          await doc.reference.update({
-            'sexo': data['sexo'] ?? sex,
-            'grupo': data['grupo'] ?? grp,
-            'semestre': data['semestre'] ?? sem,
-            'numeroControl': data['numeroControl'] ?? ctrl,
-            'perfilCompleto': true, 
-          });
-        }
-      }
-      debugPrint("Poblamiento de datos de prueba completado.");
-    } catch (e) {
-      debugPrint("Error en poblamiento: $e");
     }
   }
 
@@ -413,63 +374,96 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
 
   Widget _buildTableWithFilter(List<Usuario> allUsers) {
     final filteredUsers = allUsers.where((u) {
-      // Si el botón de "Usuarios nuevos" está activo, ignoramos el resto de filtros y mostramos solo los Pendientes
-      if (_filterOnlyPending) return u.rol == 'Pendiente';
+      try {
+        if (_filterOnlyPending) return u.rol == 'Pendiente';
 
-      final matchesName = u.nombre
-          .toLowerCase()
-          .contains(_nameController.text.toLowerCase());
-      final matchesControl = u.numeroControl.contains(_controlController.text);
-      final matchesPhone = u.numero.contains(_phoneController.text);
-      final matchesEmail =
-          u.correo.toLowerCase().contains(_emailController.text.toLowerCase());
-      final matchesSemestre = _semestreController.text.isEmpty ||
-          u.semestre.toString() == _semestreController.text;
-      final matchesRol = _selectedRol == 'Todos' || u.rol == _selectedRol;
-      final matchesSexo = _selectedSexo == 'Todos' || u.sexo == _selectedSexo;
-      final matchesGrupo = _selectedGrupo == 'Todos' || u.grupo == _selectedGrupo;
-
-      bool matchesEstado = true;
-      if (_selectedEstado == 'Activo') matchesEstado = u.enLinea;
-      if (_selectedEstado == 'Inactivo') matchesEstado = !u.enLinea;
-
-      bool matchesFechaReg = true;
-      if (_fechaRegistro != null) {
-        try {
-          final regDate =
-              DateFormat('dd/MM/yyyy').parse(u.fechaRegistro.split(' ')[0]);
-          matchesFechaReg = regDate.year == _fechaRegistro!.year &&
-              regDate.month == _fechaRegistro!.month &&
-              regDate.day == _fechaRegistro!.day;
-        } catch (_) {
-          matchesFechaReg = false;
+        final nameQuery = _nameController.text.trim().toLowerCase();
+        if (nameQuery.isNotEmpty && !u.nombre.toLowerCase().contains(nameQuery)) {
+          return false;
         }
-      }
 
-      bool matchesUltimoAcc = true;
-      if (_ultimoAcceso != null) {
-        try {
-          final accDate =
-              DateFormat('dd/MM/yyyy').parse(u.ultimoAcceso.split(' ')[0]);
-          matchesUltimoAcc = accDate.year == _ultimoAcceso!.year &&
-              accDate.month == _ultimoAcceso!.month &&
-              accDate.day == _ultimoAcceso!.day;
-        } catch (_) {
-          matchesUltimoAcc = false;
+        final ctrlQuery = _controlController.text.trim();
+        if (ctrlQuery.isNotEmpty && !u.numeroControl.contains(ctrlQuery)) {
+          return false;
         }
-      }
 
-      return matchesName &&
-          matchesControl &&
-          matchesPhone &&
-          matchesEmail &&
-          matchesSemestre &&
-          matchesRol &&
-          matchesSexo &&
-          matchesGrupo &&
-          matchesEstado &&
-          matchesFechaReg &&
-          matchesUltimoAcc;
+        final phoneQuery = _phoneController.text.trim();
+        if (phoneQuery.isNotEmpty && !u.numero.contains(phoneQuery)) {
+          return false;
+        }
+
+        final emailQuery = _emailController.text.trim().toLowerCase();
+        if (emailQuery.isNotEmpty && !u.correo.toLowerCase().contains(emailQuery)) {
+          return false;
+        }
+
+        final semQuery = _semestreController.text.trim();
+        if (semQuery.isNotEmpty && u.semestre?.toString() != semQuery) {
+          return false;
+        }
+
+        if (_selectedRol != 'Todos' && u.rol != _selectedRol) {
+          return false;
+        }
+
+        if (_selectedSexo != 'Todos' && u.sexo != _selectedSexo) {
+          return false;
+        }
+
+        if (_selectedGrupo != 'Todos' && u.grupo != _selectedGrupo) {
+          return false;
+        }
+
+        if (_selectedEstado == 'Activo' && !u.enLinea) return false;
+        if (_selectedEstado == 'Inactivo' && u.enLinea) return false;
+
+        if (_fechaRegistro != null) {
+          try {
+            final parts = u.fechaRegistro.split(' ');
+            if (parts.isNotEmpty && parts[0].isNotEmpty) {
+              DateTime? regDate;
+              if (parts[0].contains('/')) {
+                regDate = DateFormat('dd/MM/yyyy').parse(parts[0]);
+              } else if (parts[0].contains('-')) {
+                regDate = DateFormat('yyyy-MM-dd').parse(parts[0]);
+              }
+              if (regDate != null) {
+                if (regDate.year != _fechaRegistro!.year ||
+                    regDate.month != _fechaRegistro!.month ||
+                    regDate.day != _fechaRegistro!.day) {
+                  return false;
+                }
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (_ultimoAcceso != null) {
+          try {
+            final parts = u.ultimoAcceso.split(' ');
+            if (parts.isNotEmpty && parts[0].isNotEmpty) {
+              DateTime? accDate;
+              if (parts[0].contains('/')) {
+                accDate = DateFormat('dd/MM/yyyy').parse(parts[0]);
+              } else if (parts[0].contains('-')) {
+                accDate = DateFormat('yyyy-MM-dd').parse(parts[0]);
+              }
+              if (accDate != null) {
+                if (accDate.year != _ultimoAcceso!.year ||
+                    accDate.month != _ultimoAcceso!.month ||
+                    accDate.day != _ultimoAcceso!.day) {
+                  return false;
+                }
+              }
+            }
+          } catch (_) {}
+        }
+
+        return true;
+      } catch (e) {
+        debugPrint("Error filtrando usuario ${u.id}: $e");
+        return true;
+      }
     }).toList();
 
     return _buildTable(filteredUsers);
@@ -539,7 +533,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
           const Text('Filtros Avanzados', 
             style: TextStyle(color: kMuted2, fontSize: 14, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
-          // Fila 1: Nombre y N° Control
           Row(
             children: [
               Expanded(child: _buildTextField(_nameController, 'Nombre', Icons.person)),
@@ -548,7 +541,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          // Fila 2: Sexo y Grupo
           Row(
             children: [
               Expanded(child: _buildDropdownFilter('Sexo', _selectedSexo, ['Todos', 'Masculino', 'Femenino'], Icons.wc, (v) => setState(() => _selectedSexo = v!))),
@@ -557,7 +549,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          // Fila 3: Teléfono y Correo
           Row(
             children: [
               Expanded(child: _buildTextField(_phoneController, 'Teléfono', Icons.phone)),
@@ -566,7 +557,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          // Fila 4: Semestre y Rol
           Row(
             children: [
               Expanded(child: _buildTextField(_semestreController, 'Semestre', Icons.school, isNumber: true)),
@@ -575,7 +565,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          // Fila 5: Fecha Registro y Último Acceso
           Row(
             children: [
               Expanded(child: _buildDatePicker('Fecha Registro', _fechaRegistro, (d) => setState(() => _fechaRegistro = d))),
@@ -584,7 +573,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          // Fila 6: Estado (Activo/Inactivo) y Usuarios Nuevos
           Row(
             children: [
               Expanded(child: _buildDropdownFilter('Estado', _selectedEstado, ['Todos', 'Activo', 'Inactivo'], Icons.toggle_on_outlined, (v) => setState(() => _selectedEstado = v!))),
@@ -602,7 +590,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     final int count = monitor.pendingUsersCount;
     final bool hasPending = count > 0;
     
-    // Si el filtro está activo, mostramos un resaltado especial
     final Color bgColor = _filterOnlyPending ? Colors.yellow.withValues(alpha: 0.2) : (hasPending ? Colors.yellow.withValues(alpha: 0.1) : kBg);
     final Color borderColor = _filterOnlyPending ? Colors.yellow : (hasPending ? Colors.yellow.withValues(alpha: 0.5) : kBorder);
     final Color textColor = (hasPending || _filterOnlyPending) ? Colors.yellowAccent : kMuted;
@@ -786,20 +773,21 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: SizedBox(
                         width: 1800,
-                        height: 520,
                         child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const _TableHeader(),
                             const Divider(height: 1, color: kBorder),
-                            Expanded(
-                              child: ListView.separated(
-                                itemCount: users.length,
-                                separatorBuilder: (_, __) =>
-                                    const Divider(height: 1, color: kBorder),
-                                itemBuilder: (_, i) => _UserRow(
-                                  user: users[i],
-                                  onDelete: () => _onDeleteTap(users[i].id),
-                                ),
+                            ListView.separated(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: users.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1, color: kBorder),
+                              itemBuilder: (_, i) => _UserRow(
+                                user: users[i],
+                                onDelete: () => _onDeleteTap(users[i].id),
                               ),
                             ),
                           ],
@@ -868,6 +856,9 @@ class _UserRowState extends State<_UserRow> {
   @override
   Widget build(BuildContext context) {
     final u = widget.user;
+    final String idStr = u.id;
+    final String displayId = idStr.length > 5 ? idStr.substring(0, 5) : idStr;
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
@@ -878,11 +869,11 @@ class _UserRowState extends State<_UserRow> {
         child: Row(children: [
           Expanded(
               flex: 2,
-              child: Text('${u.id.substring(0, min(u.id.length, 5))}...',
+              child: Text('$displayId...',
                   style: const TextStyle(fontSize: 13, color: kMuted2))),
           Expanded(
               flex: 4,
-              child: Text(u.nombre,
+              child: Text(u.nombre.isEmpty ? 'Sin nombre' : u.nombre,
                   style: const TextStyle(
                       fontSize: 13, color: kText, fontWeight: FontWeight.w500))),
           const Expanded(
@@ -903,11 +894,11 @@ class _UserRowState extends State<_UserRow> {
                   style: TextStyle(fontSize: 13, color: u.numeroControl.isEmpty ? kMuted : kText))),
           Expanded(
               flex: 4,
-              child: Text(u.numero,
+              child: Text(u.numero.isEmpty ? 'Sin número' : u.numero,
                   style: const TextStyle(fontSize: 13, color: kText))),
           Expanded(
               flex: 6,
-              child: Text(u.correo,
+              child: Text(u.correo.isEmpty ? 'Sin correo' : u.correo,
                   style: const TextStyle(fontSize: 13, color: kText))),
           Expanded(
               flex: 3,
@@ -915,11 +906,11 @@ class _UserRowState extends State<_UserRow> {
                   style: TextStyle(fontSize: 13, color: u.semestre == null ? kMuted : kText))),
           Expanded(
               flex: 4,
-              child: Text(u.fechaRegistro,
+              child: Text(u.fechaRegistro.isEmpty ? 'Sin fecha' : u.fechaRegistro,
                   style: const TextStyle(fontSize: 13, color: kText))),
           Expanded(
               flex: 5,
-              child: Text(u.ultimoAcceso,
+              child: Text(u.ultimoAcceso.isEmpty ? 'Sin fecha' : u.ultimoAcceso,
                   style: const TextStyle(fontSize: 12, color: kMuted2))),
           Expanded(flex: 3, child: _StatusBadge(active: u.enLinea)),
           Expanded(
