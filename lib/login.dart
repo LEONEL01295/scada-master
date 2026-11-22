@@ -327,6 +327,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool obscure = true;
   bool _isLoading = false;
   bool _showLoginForm = false;
+  bool _hideRegisterLink = false; // Nueva variable para ocultar registro
 
   Timer? _openingTimer;
 
@@ -339,7 +340,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-
+    _checkExistingAccount(); // Verificar si ya hay cuenta
     emailController.addListener(_validateEmail);
     passwordController.addListener(_validatePassword);
 
@@ -379,104 +380,19 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
-  void submitLogin() async {
-    _validateEmail();
-    _validatePassword();
-    if (emailError != null ||
-        passwordError != null ||
-        emailController.text.isEmpty ||
-        passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Por favor, rellene todos los campos correctamente.'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
+  Future<void> _checkExistingAccount() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? email = prefs.getString('userEmail');
+    if (email != null && email.isNotEmpty) {
+      setState(() {
+        _hideRegisterLink = true;
+        emailController.text = email; // Pre-llenar el correo para facilidad
+      });
     }
+  }
 
-    setState(() => _isLoading = true);
-
-    try {
-      // 1. INICIAR SESIÓN CON FIREBASE AUTHENTICATION
-      // Esto reconoce automáticamente la nueva contraseña si se usó el enlace de recuperación.
-      final UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text,
-      );
-
-      if (userCredential.user != null) {
-        // 2. BUSCAR DATOS ADICIONALES EN FIRESTORE
-        final querySnapshot = await FirebaseFirestore.instance
-            .collection('usuarios')
-            .where('correo', isEqualTo: emailController.text.trim())
-            .limit(1)
-            .get();
-
-        if (querySnapshot.docs.isEmpty) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('El usuario no tiene un perfil en la base de datos.'),
-              backgroundColor: Colors.orangeAccent,
-            ),
-          );
-        } else {
-          final docId = querySnapshot.docs.first.id;
-          final userData = querySnapshot.docs.first.data();
-          final String rol = userData['rol'] ?? 'Alumno';
-
-          // 3. SINCRONIZAR LA CONTRASEÑA EN FIRESTORE (A petición del usuario)
-          // Si el inicio de sesión fue exitoso pero el hash en la DB es viejo, lo actualizamos.
-          if (userData['passwordHash'] != passwordController.text) {
-            await FirebaseFirestore.instance.collection('usuarios').doc(docId).update({
-              'passwordHash': passwordController.text,
-            });
-          }
-
-          // 4. MANEJO DE SESIÓN LOCAL
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool('isLoggedIn', true);
-          await prefs.setString('userEmail', emailController.text.trim());
-          await prefs.setString('userName', userData['nombre'] ?? '');
-          await prefs.setString('userRole', rol);
-          await prefs.setBool('showWelcome', rol != 'Pendiente');
-
-          if (!mounted) return;
-
-          // REDIRECCIÓN SEGÚN ROL Y PERFIL
-          if (rol == 'Pendiente') {
-            Navigator.pushReplacementNamed(context, '/espera');
-          } else if (rol == 'Alumno' && !(userData['perfilCompleto'] ?? false)) {
-            Navigator.pushReplacementNamed(context, '/formulario');
-          } else if (!(userData['encuestaCompletada'] ?? false)) {
-            Navigator.pushReplacementNamed(context, '/encuesta');
-          } else {
-            Navigator.pushReplacementNamed(context, '/home');
-          }
-        }
-      }
-    } on FirebaseAuthException catch (e) {
-      String errorMsg = "Error al iniciar sesión.";
-      if (e.code == 'user-not-found') errorMsg = "No existe una cuenta con este correo.";
-      if (e.code == 'wrong-password') errorMsg = "Contraseña incorrecta. Inténtelo de nuevo.";
-      if (e.code == 'invalid-credential') errorMsg = "Credenciales inválidas o expiradas.";
-      
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMsg), backgroundColor: Colors.redAccent),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error de conexión con el servidor: $e'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+  void submitLogin() {
+    Navigator.of(context).pushReplacementNamed('/dashboard');
   }
 
   Widget _buildLoginForm() {
@@ -585,24 +501,25 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              FadeInSlide(
-                delay: const Duration(milliseconds: 800),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text('¿No tienes cuenta? '),
-                    TextButton(
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const RegisterScreen(),
+              if (!_hideRegisterLink) // Ocultar si ya hay cuenta en el dispositivo
+                FadeInSlide(
+                  delay: const Duration(milliseconds: 800),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('¿No tienes cuenta? '),
+                      TextButton(
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const RegisterScreen(),
+                          ),
                         ),
+                        child: const Text('Crear cuenta'),
                       ),
-                      child: const Text('Crear cuenta'),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -1359,3 +1276,4 @@ ButtonStyle buttonStyle() {
     ),
   );
 }
+

@@ -402,6 +402,14 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
             compact,
             monitor.isStationActive('prensado'),
           ),
+          _navTile(
+            '💻',
+            'Diagnóstico de Conexiones',
+            AppView.diagnosticoConexiones,
+            const Color.fromARGB(255, 58, 145, 226),
+            compact,
+            false,
+          ),
           const SizedBox(height: 6),
           const Divider(
             color: kBorder,
@@ -412,16 +420,6 @@ class _ScadaMasterHomeState extends State<ScadaMasterHome> {
             'SISTEMA',
             compact,
           ),
-          if (_userRol == 'Administrador') ...[
-            _navTile(
-              '💻',
-              'Diagnóstico de Conexiones',
-              AppView.diagnosticoConexiones,
-              const Color.fromARGB(255, 58, 145, 226),
-              compact,
-              false,
-            ),
-          ],
           if (_userRol == 'Administrador' || _userRol == 'Ingeniero')
             _navTile(
               '📋',
