@@ -349,26 +349,24 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: kBg,
-      body: SafeArea(
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator(color: kBlue))
-            : SingleChildScrollView(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildHeader(_allUsers),
-                    const SizedBox(height: 24),
-                    _buildFilterSection(),
-                    const SizedBox(height: 22),
-                    _buildTableWithFilter(_allUsers),
-                  ],
-                ),
+    return Container(
+      color: kBg,
+      child: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: kBlue))
+          : SingleChildScrollView(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(_allUsers),
+                  const SizedBox(height: 24),
+                  _buildFilterSection(),
+                  const SizedBox(height: 22),
+                  _buildTableWithFilter(_allUsers),
+                ],
               ),
-      ),
+            ),
     );
   }
 
