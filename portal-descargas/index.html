@@ -255,14 +255,14 @@ footer p{font-size:13px;color:var(--text3)}
         <li><span>Tamaño</span><span class="spec-val">~26 MB</span></li>
         <li><span>Arquitectura</span><span class="spec-val">x64</span></li>
       </ul>
-      <button class="btn-dl" id="btn-windows" onclick="handleDownload('windows')" disabled>
+      <a href="SCADA-Master-Windows.zip" class="btn-dl" id="btn-windows" onclick="handleDownload('windows')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
           <polyline points="7 10 12 15 17 10"/>
           <line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
-        <span id="btn-windows-label">Cargando...</span>
-      </button>
+        <span id="btn-windows-label">Descargar instalador (.zip)</span>
+      </a>
       <div class="dl-secondary-links" style="margin-top:8px">
         <a href="#install" class="dl-link-sm">Guía de instalación</a>
         <a href="#requirements" class="dl-link-sm">Requisitos</a>
@@ -464,7 +464,7 @@ footer p{font-size:13px;color:var(--text3)}
   // ── 3. LINKS DE DESCARGA DIRECTA (v1.0.2) ────────────────────
   const downloadURLs = {
     android: "https://github.com/LEONEL01295/scada-master/releases/download/v1.0.4/app-arm64-v8a-release.apk",
-    windows: "https://github.com/LEONEL01295/scada-master/releases/download/v1.0.4/SCADA-Master-Windows-v1.0.4.zip"
+    windows: "SCADA-Master-Windows.zip"
   };
 
   // ── 4. ACTIVAR BOTONES DISPONIBLES ───────────────────────────
