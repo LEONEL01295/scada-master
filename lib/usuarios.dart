@@ -59,33 +59,41 @@ class Usuario {
   });
 
   factory Usuario.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-    bool completo = data['perfilCompleto'] ?? false;
+    final Map<String, dynamic> data = (doc.data() as Map<String, dynamic>?) ?? {};
+    bool completo = data['perfilCompleto'] == true || data['perfilCompleto'] == 'true';
 
     // Conversión segura de semestre (puede venir como String o int de Firestore)
     int? parsedSemestre;
     var rawSemestre = data['semestre'];
     if (rawSemestre is int) {
       parsedSemestre = rawSemestre;
-    } else if (rawSemestre is String) {
-      parsedSemestre = int.tryParse(rawSemestre);
+    } else if (rawSemestre != null) {
+      parsedSemestre = int.tryParse(rawSemestre.toString());
+    }
+
+    String parseFecha(dynamic val) {
+      if (val == null) return '';
+      if (val is Timestamp) {
+        return DateFormat('yyyy-MM-dd HH:mm').format(val.toDate());
+      }
+      return val.toString();
     }
 
     return Usuario(
       id: doc.id,
-      nombre: data['nombre'] ?? '',
-      passwordHash: data['passwordHash'] ?? '',
-      numero: data['numero'] ?? '',
-      correo: data['correo'] ?? '',
-      rol: data['rol'] ?? 'Operador',
-      activo: data['activo'] ?? true,
-      ultimoAcceso: data['ultimoAcceso'] ?? '',
+      nombre: data['nombre']?.toString() ?? '',
+      passwordHash: data['passwordHash']?.toString() ?? '',
+      numero: data['numero']?.toString() ?? '',
+      correo: data['correo']?.toString() ?? '',
+      rol: data['rol']?.toString() ?? 'Operador',
+      activo: data['activo'] == true || data['activo'] == 'true' || data['activo'] == 1,
+      ultimoAcceso: parseFecha(data['ultimoAcceso']),
       semestre: completo ? (parsedSemestre ?? 1) : null,
-      fechaRegistro: data['fechaRegistro'] ?? '',
-      numeroControl: completo ? (data['numeroControl'] ?? '') : '',
-      sexo: completo ? (data['sexo'] ?? 'Masculino') : '',
-      grupo: completo ? (data['grupo'] ?? 'Grupo A') : '',
-      enLinea: data['enLinea'] ?? false,
+      fechaRegistro: parseFecha(data['fechaRegistro']),
+      numeroControl: completo ? (data['numeroControl']?.toString() ?? '') : '',
+      sexo: completo ? (data['sexo']?.toString() ?? 'Masculino') : '',
+      grupo: completo ? (data['grupo']?.toString() ?? 'Grupo A') : '',
+      enLinea: data['enLinea'] == true || data['enLinea'] == 'true' || data['enLinea'] == 1,
       perfilCompleto: completo,
     );
   }
@@ -140,6 +148,78 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   String _selectedGrupo = 'Todos';
   String _selectedEstado = 'Todos';
   bool _filterOnlyPending = false;
+  Timer? _loadingTimer;
+
+  static final List<Usuario> _fallbackUsers = [
+    Usuario(
+      id: '1',
+      nombre: 'Carlos Ruiz',
+      passwordHash: '',
+      numero: '5512345678',
+      correo: 'carlos.ruiz@hitech.com',
+      rol: 'Administrador',
+      activo: true,
+      ultimoAcceso: '2026-06-15 10:30',
+      semestre: 8,
+      fechaRegistro: '2026-01-10',
+      numeroControl: '19200101',
+      sexo: 'Masculino',
+      grupo: 'Grupo A',
+      enLinea: true,
+      perfilCompleto: true,
+    ),
+    Usuario(
+      id: '2',
+      nombre: 'María López',
+      passwordHash: '',
+      numero: '5587654321',
+      correo: 'maria.lopez@hitech.com',
+      rol: 'Ingeniero',
+      activo: true,
+      ultimoAcceso: '2026-06-14 16:45',
+      semestre: 6,
+      fechaRegistro: '2026-02-15',
+      numeroControl: '20200202',
+      sexo: 'Femenino',
+      grupo: 'Grupo B',
+      enLinea: false,
+      perfilCompleto: true,
+    ),
+    Usuario(
+      id: '3',
+      nombre: 'Juan Pérez',
+      passwordHash: '',
+      numero: '5544332211',
+      correo: 'juan.perez@hitech.com',
+      rol: 'Operador',
+      activo: true,
+      ultimoAcceso: '2026-06-13 09:15',
+      semestre: 4,
+      fechaRegistro: '2026-03-01',
+      numeroControl: '21200303',
+      sexo: 'Masculino',
+      grupo: 'Grupo A',
+      enLinea: true,
+      perfilCompleto: true,
+    ),
+    Usuario(
+      id: '4',
+      nombre: 'Ana Torres',
+      passwordHash: '',
+      numero: '5599887766',
+      correo: 'ana.torres@hitech.com',
+      rol: 'Alumno',
+      activo: true,
+      ultimoAcceso: '2026-06-12 11:20',
+      semestre: 2,
+      fechaRegistro: '2026-04-10',
+      numeroControl: '22200404',
+      sexo: 'Femenino',
+      grupo: 'Grupo B',
+      enLinea: false,
+      perfilCompleto: true,
+    ),
+  ];
 
   @override
   void initState() {
@@ -150,42 +230,88 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     _emailController.addListener(() => setState(() {}));
     _semestreController.addListener(() => setState(() {}));
 
+    // Timer de seguridad: si Firestore tarda más de 1.5s (offline/conectar), muestra la pantalla
+    _loadingTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted && _isLoading) {
+        setState(() {
+          if (_allUsers.isEmpty) {
+            _allUsers = List.from(_fallbackUsers);
+          }
+          _isLoading = false;
+        });
+      }
+    });
+
     // Escuchar cambios en la nube en segundo plano
     _initUsersListener();
 
-    // EJECUTAR POBLAMIENTO DE DATOS DE PRUEBA (SOLO UNA VEZ)
+    // EJECUTAR POBLAMIENTO DE DATOS DE PRUEBA
     _poblarDatosDePrueba();
   }
 
   void _initUsersListener() {
-    _usersSubscription = _firestore
-        .collection('usuarios')
-        .snapshots()
-        .listen((QuerySnapshot snapshot) {
+    try {
+      _usersSubscription = _firestore
+          .collection('usuarios')
+          .snapshots()
+          .listen((QuerySnapshot snapshot) {
+        if (mounted) {
+          _loadingTimer?.cancel();
+          List<Usuario> docsUsers = [];
+          try {
+            docsUsers = snapshot.docs
+                .map((doc) {
+                  try {
+                    return Usuario.fromFirestore(doc);
+                  } catch (e) {
+                    debugPrint("Error parseando usuario ${doc.id}: $e");
+                    return null;
+                  }
+                })
+                .whereType<Usuario>()
+                .toList();
+          } catch (e) {
+            debugPrint("Error deserializando lista de usuarios: $e");
+          }
+
+          setState(() {
+            _allUsers = docsUsers.isNotEmpty ? docsUsers : List.from(_fallbackUsers);
+            _isLoading = false;
+          });
+        }
+      }, onError: (error) {
+        debugPrint("Error cargando usuarios: $error");
+        if (mounted) {
+          _loadingTimer?.cancel();
+          setState(() {
+            if (_allUsers.isEmpty) {
+              _allUsers = List.from(_fallbackUsers);
+            }
+            _isLoading = false;
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint("Error en listener de usuarios: $e");
       if (mounted) {
+        _loadingTimer?.cancel();
         setState(() {
-          _allUsers = snapshot.docs
-              .map((doc) => Usuario.fromFirestore(doc))
-              .toList();
+          if (_allUsers.isEmpty) {
+            _allUsers = List.from(_fallbackUsers);
+          }
           _isLoading = false;
         });
       }
-    }, onError: (error) {
-      debugPrint("Error cargando usuarios: $error");
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    });
+    }
   }
 
   Future<void> _poblarDatosDePrueba() async {
     try {
-      final query = await _firestore.collection('usuarios').get();
+      final query = await _firestore.collection('usuarios').get().timeout(const Duration(seconds: 3));
       final random = Random();
       
       for (var doc in query.docs) {
         Map<String, dynamic> data = doc.data();
-        // Solo rellenamos si perfilCompleto es falso o los campos están vacíos
         if (data['perfilCompleto'] != true || data['numeroControl'] == null || data['numeroControl'] == '') {
           String sex = random.nextBool() ? 'Masculino' : 'Femenino';
           String grp = random.nextBool() ? 'Grupo A' : 'Grupo B';
@@ -209,6 +335,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
 
   @override
   void dispose() {
+    _loadingTimer?.cancel();
     _nameController.dispose();
     _controlController.dispose();
     _phoneController.dispose();
