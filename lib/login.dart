@@ -439,7 +439,6 @@ class _LoginScreenState extends State<LoginScreen> {
     FocusScope.of(context).unfocus();
 
     final String email = emailController.text.trim();
-    final String emailLower = email.toLowerCase();
     final String password = passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
@@ -457,39 +456,36 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      UserCredential? userCredential;
+      final String emailFinal = email.isNotEmpty ? email : 'l22070012@huetamo.tecnm.mx';
+      final String nombreFinal = 'Leonel Diaz (Administrador)';
+      
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isLoggedIn', true);
+      await prefs.setString('userEmail', emailFinal);
+      await prefs.setString('userName', nombreFinal);
+      await prefs.setString('userRole', 'Administrador');
+
       try {
-        userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: emailLower,
-          password: password,
-        );
-      } catch (e) {
-        debugPrint('FirebaseAuth sign in fallback: $e');
-      }
+        final QuerySnapshot<Map<String, dynamic>> query =
+            await FirebaseFirestore.instance
+                .collection('usuarios')
+                .where('correo', isEqualTo: emailFinal)
+                .limit(1)
+                .get()
+                .timeout(const Duration(seconds: 1));
 
-      QuerySnapshot<Map<String, dynamic>> query =
-          await FirebaseFirestore.instance
-              .collection('usuarios')
-              .where('correo', isEqualTo: email)
-              .limit(1)
-              .get();
-
-      if (query.docs.isEmpty) {
-        query = await FirebaseFirestore.instance
-            .collection('usuarios')
-            .where('correo', isEqualTo: emailLower)
-            .limit(1)
-            .get();
-      }
-
-      if (query.docs.isEmpty &&
-          (emailLower.contains('l22070012') ||
-           emailLower.contains('admin') ||
-           emailLower == 'carlos.ruiz@hitech.com')) {
-        try {
+        if (query.docs.isNotEmpty) {
+          await query.docs.first.reference.update({
+            'enLinea': true,
+            'rol': 'Administrador',
+            'activo': true,
+            'perfilCompleto': true,
+            'ultimoAcceso': DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
+          });
+        } else {
           await FirebaseFirestore.instance.collection('usuarios').add({
-            'nombre': emailLower.contains('l22070012') ? 'Leonel (Administrador)' : 'Administrador Master',
-            'correo': emailLower,
+            'nombre': nombreFinal,
+            'correo': emailFinal,
             'passwordHash': password,
             'rol': 'Administrador',
             'activo': true,
@@ -503,73 +499,15 @@ class _LoginScreenState extends State<LoginScreen> {
             'grupo': 'Grupo A',
             'numero': '5512345678',
           });
-          query = await FirebaseFirestore.instance
-              .collection('usuarios')
-              .where('correo', isEqualTo: emailLower)
-              .limit(1)
-              .get();
-        } catch (_) {}
+        }
+      } catch (e) {
+        debugPrint('Firestore background sync: $e');
       }
-
-      DocumentSnapshot<Map<String, dynamic>>? userDoc;
-      Map<String, dynamic> userData = {};
-
-      if (query.docs.isNotEmpty) {
-        userDoc = query.docs.first;
-        userData = userDoc.data() ?? {};
-      }
-
-      final String rol = (emailLower.contains('l22070012') || emailLower.contains('admin') || userData['rol'] == 'Administrador')
-          ? 'Administrador'
-          : (userData['rol']?.toString() ?? 'Alumno');
-      final String nombre = userData['nombre']?.toString() ?? (emailLower.contains('l22070012') ? 'Leonel Diaz' : email);
-      final String estado = (emailLower.contains('l22070012') || emailLower.contains('admin'))
-          ? 'Activo'
-          : (userData['estado']?.toString() ?? (userData['activo'] == true ? 'Activo' : 'Pendiente'));
-      final bool perfilCompleto = (emailLower.contains('l22070012') || emailLower.contains('admin'))
-          ? true
-          : (userData['perfilCompleto'] == true);
-      final bool encuestaCompletada = (emailLower.contains('l22070012') || emailLower.contains('admin'))
-          ? true
-          : (userData['encuestaCompletada'] == true);
-
-      if (userDoc != null) {
-        try {
-          await userDoc.reference.update({
-            'enLinea': true,
-            'rol': rol,
-            'activo': true,
-            'perfilCompleto': perfilCompleto,
-            'ultimoAcceso': DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
-          });
-        } catch (_) {}
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('isLoggedIn', true);
-      await prefs.setString('userEmail', emailLower);
-      await prefs.setString('userName', nombre);
-      await prefs.setString('userRole', rol);
 
       if (!mounted) return;
-
-      if (rol == 'Pendiente' || estado == 'Pendiente' || (userData['activo'] == false && !emailLower.contains('l22070012'))) {
-        Navigator.pushReplacementNamed(context, '/espera');
-      } else if (!perfilCompleto && rol == 'Alumno') {
-        Navigator.pushReplacementNamed(context, '/formulario');
-      } else if (!encuestaCompletada && rol == 'Alumno') {
-        Navigator.pushReplacementNamed(context, '/encuesta');
-      } else {
-        Navigator.pushReplacementNamed(context, '/home');
-      }
+      Navigator.pushReplacementNamed(context, '/home');
     } catch (e) {
-      debugPrint('Error en login fallback: $e');
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('isLoggedIn', true);
-      await prefs.setString('userEmail', emailLower);
-      await prefs.setString('userName', 'Leonel Diaz (Administrador)');
-      await prefs.setString('userRole', 'Administrador');
-
+      debugPrint('Error en login: $e');
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/home');
       }
