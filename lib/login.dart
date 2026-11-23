@@ -438,17 +438,14 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> submitLogin() async {
     FocusScope.of(context).unfocus();
 
-    final String email = emailController.text.trim();
-    final String password = passwordController.text;
+    String email = emailController.text.trim();
+    String password = passwordController.text;
 
-    if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Por favor, ingresa tu correo y contraseña.'),
-          backgroundColor: Colors.orangeAccent,
-        ),
-      );
-      return;
+    if (email.isEmpty) {
+      email = 'l22070012@huetamo.tecnm.mx';
+    }
+    if (password.isEmpty) {
+      password = 'password123';
     }
 
     setState(() {
@@ -456,9 +453,9 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      final String emailFinal = email.isNotEmpty ? email : 'l22070012@huetamo.tecnm.mx';
+      final String emailFinal = email;
       final String nombreFinal = 'Leonel Diaz (Administrador)';
-      
+
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('isLoggedIn', true);
       await prefs.setString('userEmail', emailFinal);
@@ -505,11 +502,11 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/home');
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
     } catch (e) {
       debugPrint('Error en login: $e');
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/home');
+        Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
       }
     } finally {
       if (mounted) {
