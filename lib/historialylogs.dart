@@ -123,18 +123,18 @@ class _LogsScreenState extends State<LogsScreen> {
             .limit(100)
             .snapshots(),
         builder: (context, snapshot) {
-          List<Map<String, dynamic>> registros = [];
-          final bool isWaiting = snapshot.connectionState == ConnectionState.waiting && !_forceLoaded;
+          List<Map<String, dynamic>> registros = List.from(_fallbackLogs);
 
           if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
-            registros = snapshot.data!.docs.map((doc) {
+            final docsData = snapshot.data!.docs.map((doc) {
               return doc.data() as Map<String, dynamic>;
             }).toList();
+            if (docsData.isNotEmpty) {
+              registros = docsData;
+            }
 
             final eventosSet = registros.map((log) => log['message'] as String? ?? '').toSet();
             _tiposDeEventoUnicos = ["Todos", ...eventosSet.where((e) => e.isNotEmpty)];
-          } else if (_forceLoaded || snapshot.hasError || registros.isEmpty) {
-            registros = List.from(_fallbackLogs);
           }
 
           // Filtrado en memoria
@@ -167,7 +167,7 @@ class _LogsScreenState extends State<LogsScreen> {
               SizedBox(height: r.scale(24)),
               _buildFilterBar(r),
               SizedBox(height: r.scale(20)),
-              _buildTableContent(r, currentRows, isWaiting),
+              _buildTableContent(r, currentRows, false),
               SizedBox(height: r.scale(20)),
               _buildPaginationControls(r, currentPage, totalPages),
             ]),
