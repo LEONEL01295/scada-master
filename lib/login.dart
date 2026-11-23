@@ -72,7 +72,7 @@ class _FadeInSlideState extends State<FadeInSlide>
 
 // ================= ANIMACIÓN DE APERTURA =================
 class _LoginOpeningAnimation extends StatefulWidget {
-  const _LoginOpeningAnimation({super.key});
+  const _LoginOpeningAnimation();
 
   @override
   State<_LoginOpeningAnimation> createState() => _LoginOpeningAnimationState();
@@ -323,7 +323,7 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  bool rememberMe = false;
+  bool rememberMe = true;
   bool obscure = true;
   bool _isLoading = false;
   bool _showLoginForm = false;
@@ -340,7 +340,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    _checkExistingAccount(); // Verificar si ya hay cuenta
+    _checkExistingAccount(); // Verificar si ya hay cuenta iniciada
     emailController.addListener(_validateEmail);
     passwordController.addListener(_validatePassword);
 
@@ -382,17 +382,179 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _checkExistingAccount() async {
     final prefs = await SharedPreferences.getInstance();
+    final bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
     final String? email = prefs.getString('userEmail');
+
     if (email != null && email.isNotEmpty) {
+      if (isLoggedIn) {
+        if (!mounted) return;
+        _autoNavigateUser(email);
+        return;
+      }
       setState(() {
         _hideRegisterLink = true;
-        emailController.text = email; // Pre-llenar el correo para facilidad
+        emailController.text = email;
       });
     }
   }
 
-  void submitLogin() {
-    Navigator.of(context).pushReplacementNamed('/dashboard');
+  Future<void> _autoNavigateUser(String email) async {
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('usuarios')
+          .where('correo', isEqualTo: email)
+          .limit(1)
+          .get();
+
+      if (!mounted) return;
+
+      if (query.docs.isNotEmpty) {
+        final userData = query.docs.first.data();
+        final String rol = userData['rol']?.toString() ?? 'Alumno';
+        final String estado = userData['estado']?.toString() ??
+            (userData['activo'] == true ? 'Activo' : 'Pendiente');
+        final bool perfilCompleto = userData['perfilCompleto'] == true;
+        final bool encuestaCompletada = userData['encuestaCompletada'] == true;
+
+        if (rol == 'Pendiente' || estado == 'Pendiente' || userData['activo'] == false) {
+          Navigator.pushReplacementNamed(context, '/espera');
+          return;
+        } else if (!perfilCompleto && rol == 'Alumno') {
+          Navigator.pushReplacementNamed(context, '/formulario');
+          return;
+        } else if (!encuestaCompletada && rol == 'Alumno') {
+          Navigator.pushReplacementNamed(context, '/encuesta');
+          return;
+        }
+      }
+      Navigator.pushReplacementNamed(context, '/home');
+    } catch (e) {
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/home');
+      }
+    }
+  }
+
+  Future<void> submitLogin() async {
+    FocusScope.of(context).unfocus();
+
+    final String email = emailController.text.trim();
+    final String password = passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Por favor, ingresa tu correo y contraseña.'),
+          backgroundColor: Colors.orangeAccent,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      UserCredential? userCredential;
+      try {
+        userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      } catch (e) {
+        debugPrint('FirebaseAuth sign in fallback: $e');
+      }
+
+      final QuerySnapshot<Map<String, dynamic>> query =
+          await FirebaseFirestore.instance
+              .collection('usuarios')
+              .where('correo', isEqualTo: email)
+              .limit(1)
+              .get();
+
+      if (query.docs.isEmpty && userCredential == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Usuario no encontrado o credenciales incorrectas.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+        return;
+      }
+
+      DocumentSnapshot<Map<String, dynamic>>? userDoc;
+      Map<String, dynamic> userData = {};
+
+      if (query.docs.isNotEmpty) {
+        userDoc = query.docs.first;
+        userData = userDoc.data() ?? {};
+      }
+
+      if (userCredential == null && query.docs.isNotEmpty) {
+        final String storedHash = userData['passwordHash']?.toString() ?? '';
+        if (storedHash.isNotEmpty && storedHash != password) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Contraseña incorrecta.'),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+          return;
+        } else if (storedHash.isEmpty) {
+          // Si el usuario no tenía passwordHash asignada (ej. admin inicial), asignarla
+          await userDoc!.reference.update({'passwordHash': password});
+        }
+      }
+
+      final String rol = userData['rol']?.toString() ?? 'Alumno';
+      final String nombre = userData['nombre']?.toString() ?? email;
+      final String estado = userData['estado']?.toString() ??
+          (userData['activo'] == true ? 'Activo' : 'Pendiente');
+      final bool perfilCompleto = userData['perfilCompleto'] == true;
+      final bool encuestaCompletada = userData['encuestaCompletada'] == true;
+
+      if (userDoc != null) {
+        await userDoc.reference.update({
+          'enLinea': true,
+          'ultimoAcceso': DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.now()),
+        });
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isLoggedIn', true);
+      await prefs.setString('userEmail', email);
+      await prefs.setString('userName', nombre);
+      await prefs.setString('userRole', rol);
+
+      if (!mounted) return;
+
+      if (rol == 'Pendiente' || estado == 'Pendiente' || userData['activo'] == false) {
+        Navigator.pushReplacementNamed(context, '/espera');
+      } else if (!perfilCompleto && rol == 'Alumno') {
+        Navigator.pushReplacementNamed(context, '/formulario');
+      } else if (!encuestaCompletada && rol == 'Alumno') {
+        Navigator.pushReplacementNamed(context, '/encuesta');
+      } else {
+        Navigator.pushReplacementNamed(context, '/home');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al iniciar sesión: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   Widget _buildLoginForm() {
@@ -492,11 +654,22 @@ class _LoginScreenState extends State<LoginScreen> {
               FadeInSlide(
                 delay: const Duration(milliseconds: 500),
                 child: ElevatedButton(
-                  onPressed: submitLogin,
+                  onPressed: _isLoading ? null : submitLogin,
                   style: buttonStyle(),
-                  child: const SizedBox(
+                  child: SizedBox(
                     width: double.infinity,
-                    child: Center(child: Text('Entrar')),
+                    child: Center(
+                      child: _isLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text('Entrar'),
+                    ),
                   ),
                 ),
               ),

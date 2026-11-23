@@ -43,7 +43,7 @@ class _PActuatorModel {
   bool on;
   bool disabled;
   _PActuatorModel(this.id, this.label, this.description,
-      {this.on = false, this.disabled = false});
+      [this.on = false, this.disabled = false]);
 }
 
 // ── Widget público exportado ──────────────────────────────────────────────
