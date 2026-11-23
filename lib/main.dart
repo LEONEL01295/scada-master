@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'auth_guard.dart';
 import 'espera.dart';
 import 'firebase_options.dart';
 import 'formulario.dart';
@@ -221,7 +222,7 @@ class MyApp extends StatelessWidget {
         ),
       ),
       home: firebaseInicializado
-          ? const LoginScreen()
+          ? const AuthGuard()
           : FirebaseErrorScreen(
               error: firebaseError,
             ),

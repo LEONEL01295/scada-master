@@ -518,7 +518,17 @@ class _PermisosDialogState extends State<PermisosDialog> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () {
+                      final Map<String, dynamic> permisosMap = {};
+                      for (final m in _modulos) {
+                        permisosMap[m.nombre] = {
+                          'ver': m.ver,
+                          'editar': m.editar,
+                          'eliminar': m.eliminar,
+                        };
+                      }
+                      Navigator.pop(context, permisosMap);
+                    },
                     child: const Text('Guardar permisos',
                         style: TextStyle(
                             fontSize: 14, fontWeight: FontWeight.w600)),

@@ -12,7 +12,6 @@ import 'nube.dart' show CloudSyncDashboard;
 import 'analytics.dart' show AnalyticsDashboard;
 import 'usuarios.dart' show UsuariosScreen;
 import 'historialylogs.dart' show LogsScreen;
-import 'conexiones_tablas.dart' show ConexionesScreen;
 import 'diagnostico_conexiones.dart' show DiagnosticoScreen;
 import 'scada_neumatico.dart' show ScadaNeumaticoBoard;
 import 'main_robot_3_ejes.dart' show ScadaRobotDashboard;

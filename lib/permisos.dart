@@ -1,4 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+
+import 'usuarios.dart' show Usuario;
 
 //void main() => runApp(const PermisosApp());
 
@@ -62,7 +65,8 @@ class _Modulo {
 
 // ═══════════════════════════════════════════════════════════════════════════
 class PermisosScreen extends StatefulWidget {
-  const PermisosScreen({super.key});
+  final Usuario? user;
+  const PermisosScreen({super.key, this.user});
 
   @override
   State<PermisosScreen> createState() => _PermisosScreenState();
@@ -71,53 +75,84 @@ class PermisosScreen extends StatefulWidget {
 class _PermisosScreenState extends State<PermisosScreen> {
   late final List<_Modulo> _modulos;
   bool _selectAll = false;
+  bool _isSaving = false;
+
+  bool _getPermisoVal(
+    Map<String, dynamic>? permisos,
+    String modulo,
+    String accion, {
+    required bool defaultVal,
+  }) {
+    if (permisos == null || !permisos.containsKey(modulo)) return defaultVal;
+    final modData = permisos[modulo];
+    if (modData is Map && modData.containsKey(accion)) {
+      return modData[accion] == true || modData[accion] == 'true';
+    }
+    return defaultVal;
+  }
 
   @override
   void initState() {
     super.initState();
 
+    final Map<String, dynamic>? permisosExistentes = widget.user?.permisos;
+
     _modulos = [
       _Modulo(
         nombre: 'Dashboard',
         icon: Icons.dashboard_outlined,
-        ver: true,
-        editar: true,
+        ver: _getPermisoVal(permisosExistentes, 'Dashboard', 'ver', defaultVal: true),
+        editar: _getPermisoVal(permisosExistentes, 'Dashboard', 'editar', defaultVal: true),
+        eliminar: _getPermisoVal(permisosExistentes, 'Dashboard', 'eliminar', defaultVal: false),
       ),
       _Modulo(
         nombre: 'Maquetas',
         icon: Icons.view_quilt_outlined,
-        ver: true,
-        eliminar: true,
+        ver: _getPermisoVal(permisosExistentes, 'Maquetas', 'ver', defaultVal: true),
+        editar: _getPermisoVal(permisosExistentes, 'Maquetas', 'editar', defaultVal: false),
+        eliminar: _getPermisoVal(permisosExistentes, 'Maquetas', 'eliminar', defaultVal: true),
       ),
       _Modulo(
         nombre: 'Monitoreo',
         icon: Icons.monitor_heart_outlined,
-        ver: true,
+        ver: _getPermisoVal(permisosExistentes, 'Monitoreo', 'ver', defaultVal: true),
+        editar: _getPermisoVal(permisosExistentes, 'Monitoreo', 'editar', defaultVal: false),
+        eliminar: _getPermisoVal(permisosExistentes, 'Monitoreo', 'eliminar', defaultVal: false),
       ),
       _Modulo(
         nombre: 'Alarmas',
         icon: Icons.notifications_outlined,
-        ver: true,
+        ver: _getPermisoVal(permisosExistentes, 'Alarmas', 'ver', defaultVal: true),
+        editar: _getPermisoVal(permisosExistentes, 'Alarmas', 'editar', defaultVal: false),
+        eliminar: _getPermisoVal(permisosExistentes, 'Alarmas', 'eliminar', defaultVal: false),
       ),
       _Modulo(
         nombre: 'Historial / Logs',
         icon: Icons.history_outlined,
-        ver: true,
+        ver: _getPermisoVal(permisosExistentes, 'Historial / Logs', 'ver', defaultVal: true),
+        editar: _getPermisoVal(permisosExistentes, 'Historial / Logs', 'editar', defaultVal: false),
+        eliminar: _getPermisoVal(permisosExistentes, 'Historial / Logs', 'eliminar', defaultVal: false),
       ),
       _Modulo(
         nombre: 'Reportes',
         icon: Icons.description_outlined,
+        ver: _getPermisoVal(permisosExistentes, 'Reportes', 'ver', defaultVal: false),
+        editar: _getPermisoVal(permisosExistentes, 'Reportes', 'editar', defaultVal: false),
+        eliminar: _getPermisoVal(permisosExistentes, 'Reportes', 'eliminar', defaultVal: false),
       ),
       _Modulo(
         nombre: 'Cloud Sync',
         icon: Icons.cloud_outlined,
-        ver: true,
-        editar: true,
+        ver: _getPermisoVal(permisosExistentes, 'Cloud Sync', 'ver', defaultVal: true),
+        editar: _getPermisoVal(permisosExistentes, 'Cloud Sync', 'editar', defaultVal: true),
+        eliminar: _getPermisoVal(permisosExistentes, 'Cloud Sync', 'eliminar', defaultVal: false),
       ),
       _Modulo(
         nombre: 'Configuración',
         icon: Icons.settings_outlined,
-        ver: true,
+        ver: _getPermisoVal(permisosExistentes, 'Configuración', 'ver', defaultVal: true),
+        editar: _getPermisoVal(permisosExistentes, 'Configuración', 'editar', defaultVal: false),
+        eliminar: _getPermisoVal(permisosExistentes, 'Configuración', 'eliminar', defaultVal: false),
       ),
     ];
 
@@ -143,8 +178,61 @@ class _PermisosScreenState extends State<PermisosScreen> {
     });
   }
 
+  Future<void> _guardarPermisos() async {
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      final Map<String, dynamic> permisosMap = {};
+      for (final m in _modulos) {
+        permisosMap[m.nombre] = {
+          'ver': m.ver,
+          'editar': m.editar,
+          'eliminar': m.eliminar,
+        };
+      }
+
+      if (widget.user != null && widget.user!.id.isNotEmpty) {
+        await FirebaseFirestore.instance
+            .collection('usuarios')
+            .doc(widget.user!.id)
+            .update({
+          'permisos': permisosMap,
+        });
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Permisos guardados para ${widget.user?.nombre ?? "el usuario"}',
+          ),
+          backgroundColor: const Color(0xFF10B981),
+        ),
+      );
+      Navigator.pop(context, permisosMap);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al guardar permisos: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final String nombreMostrar = widget.user?.nombre ?? 'Carlos Ruiz';
+
     return GestureDetector(
       onTap: () => Navigator.pop(context), // cerrar tocando afuera
       child: Material(
@@ -171,8 +259,8 @@ class _PermisosScreenState extends State<PermisosScreen> {
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-                            children: const [
-                              Text(
+                            children: [
+                              const Text(
                                 'Permisos del usuario',
                                 style: TextStyle(
                                   fontSize: 20,
@@ -180,10 +268,10 @@ class _PermisosScreenState extends State<PermisosScreen> {
                                   color: kText,
                                 ),
                               ),
-                              SizedBox(height: 3),
+                              const SizedBox(height: 3),
                               Text(
-                                'Configurar permisos para: Carlos Ruiz',
-                                style: TextStyle(
+                                'Configurar permisos para: $nombreMostrar',
+                                style: const TextStyle(
                                   fontSize: 12,
                                   color: kMuted2,
                                 ),
@@ -261,7 +349,7 @@ class _PermisosScreenState extends State<PermisosScreen> {
                               side: const BorderSide(color: kBorder),
                               padding: const EdgeInsets.symmetric(vertical: 14),
                             ),
-                            onPressed: () {},
+                            onPressed: () => Navigator.pop(context),
                             child: const Text('Cancelar'),
                           ),
                         ),
@@ -272,8 +360,17 @@ class _PermisosScreenState extends State<PermisosScreen> {
                               backgroundColor: kBlue,
                               padding: const EdgeInsets.symmetric(vertical: 14),
                             ),
-                            onPressed: () {},
-                            child: const Text('Guardar permisos'),
+                            onPressed: _isSaving ? null : _guardarPermisos,
+                            child: _isSaving
+                                ? const SizedBox(
+                                    height: 18,
+                                    width: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text('Guardar permisos'),
                           ),
                         ),
                       ],

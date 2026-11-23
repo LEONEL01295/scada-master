@@ -38,6 +38,7 @@ class Usuario {
   final String grupo;
   final bool enLinea;
   final bool perfilCompleto;
+  final Map<String, dynamic>? permisos;
 
   Usuario({
     required this.id,
@@ -55,6 +56,7 @@ class Usuario {
     required this.grupo,
     required this.enLinea,
     required this.perfilCompleto,
+    this.permisos,
   });
 
   factory Usuario.fromFirestore(DocumentSnapshot doc) {
@@ -93,6 +95,7 @@ class Usuario {
       grupo: data['grupo']?.toString() ?? 'Grupo A',
       enLinea: data['enLinea'] == true || data['enLinea'] == 'true' || data['enLinea'] == 1,
       perfilCompleto: completo,
+      permisos: data['permisos'] as Map<String, dynamic>?,
     );
   }
 }
@@ -943,7 +946,7 @@ class _UserRowState extends State<_UserRow> {
                       context: context,
                       barrierDismissible: true,
                       barrierColor: Colors.black.withValues(alpha: 0.65),
-                      builder: (_) => const PermisosScreen(),
+                      builder: (_) => PermisosScreen(user: u),
                     );
                   },
                 ),
