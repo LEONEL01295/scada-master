@@ -55,22 +55,16 @@ Future<void> main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    FirebaseFirestore.instance.settings = const Settings(
-      persistenceEnabled: true,
-      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-    );
-
     firebaseInicializado = true;
-
     debugPrint('Firebase inicializado correctamente.');
 
-    // Espera a que termine la comprobación del administrador.
-    await _createAdminIfNotExist();
-  } catch (e, stackTrace) {
+    // Ejecución asíncrona no bloqueante
+    _createAdminIfNotExist().catchError((e) {
+      debugPrint('Error comprobando administrador: $e');
+    });
+  } catch (e) {
     firebaseError = e.toString();
-
     debugPrint('Error inicializando Firebase: $e');
-    debugPrintStack(stackTrace: stackTrace);
   }
 
   // ----------------------------------------------------------

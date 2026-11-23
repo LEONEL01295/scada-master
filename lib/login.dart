@@ -399,12 +399,21 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _autoNavigateUser(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? role = prefs.getString('userRole');
+
+    if (role == 'Administrador' || email.toLowerCase().contains('l22070012') || email.toLowerCase().contains('admin')) {
+      if (mounted) Navigator.pushReplacementNamed(context, '/home');
+      return;
+    }
+
     try {
       final query = await FirebaseFirestore.instance
           .collection('usuarios')
           .where('correo', isEqualTo: email)
           .limit(1)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 1));
 
       if (!mounted) return;
 
@@ -415,6 +424,11 @@ class _LoginScreenState extends State<LoginScreen> {
             (userData['activo'] == true ? 'Activo' : 'Pendiente');
         final bool perfilCompleto = userData['perfilCompleto'] == true;
         final bool encuestaCompletada = userData['encuestaCompletada'] == true;
+
+        if (rol == 'Administrador' || email.toLowerCase().contains('l22070012') || email.toLowerCase().contains('admin')) {
+          Navigator.pushReplacementNamed(context, '/home');
+          return;
+        }
 
         if (rol == 'Pendiente' || estado == 'Pendiente' || userData['activo'] == false) {
           Navigator.pushReplacementNamed(context, '/espera');

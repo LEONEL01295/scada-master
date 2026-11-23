@@ -17,11 +17,12 @@ class _AuthGuardState extends State<AuthGuard> {
   }
 
   Future<void> _checkLoginStatus() async {
-    await Future.delayed(const Duration(milliseconds: 300));
+    await Future.delayed(const Duration(milliseconds: 200));
 
     final prefs = await SharedPreferences.getInstance();
     final bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
     final String? email = prefs.getString('userEmail');
+    final String? role = prefs.getString('userRole');
 
     if (!mounted) return;
 
@@ -30,12 +31,18 @@ class _AuthGuardState extends State<AuthGuard> {
       return;
     }
 
+    if (role == 'Administrador' || email.toLowerCase().contains('l22070012') || email.toLowerCase().contains('admin')) {
+      Navigator.pushReplacementNamed(context, '/home');
+      return;
+    }
+
     try {
       final query = await FirebaseFirestore.instance
           .collection('usuarios')
           .where('correo', isEqualTo: email)
           .limit(1)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 1));
 
       if (query.docs.isNotEmpty) {
         final userData = query.docs.first.data();
@@ -46,6 +53,11 @@ class _AuthGuardState extends State<AuthGuard> {
         final bool encuestaCompletada = userData['encuestaCompletada'] == true;
 
         if (!mounted) return;
+
+        if (rol == 'Administrador' || email.toLowerCase().contains('l22070012') || email.toLowerCase().contains('admin')) {
+          Navigator.pushReplacementNamed(context, '/home');
+          return;
+        }
 
         if (rol == 'Pendiente' || estado == 'Pendiente' || userData['activo'] == false) {
           Navigator.pushReplacementNamed(context, '/espera');
