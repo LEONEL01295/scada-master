@@ -54,9 +54,8 @@ class _LogsScreenState extends State<LogsScreen> {
   final int rowsPerPage = 10;
 
   List<String> _tiposDeEventoUnicos = ["Todos"];
-
-  bool _forceLoaded = false;
-  Timer? _timeoutTimer;
+  List<Map<String, dynamic>> _registros = [];
+  StreamSubscription? _logsSubscription;
 
   static final List<Map<String, dynamic>> _fallbackLogs = [
     {
@@ -96,83 +95,79 @@ class _LogsScreenState extends State<LogsScreen> {
   @override
   void initState() {
     super.initState();
-    _timeoutTimer = Timer(const Duration(milliseconds: 1000), () {
-      if (mounted && !_forceLoaded) {
-        setState(() {
-          _forceLoaded = true;
-        });
-      }
-    });
+    _registros = List.from(_fallbackLogs);
+    _loadLogs();
+  }
+
+  void _loadLogs() {
+    try {
+      _logsSubscription = FirebaseFirestore.instance
+          .collection('historial')
+          .limit(50)
+          .snapshots()
+          .listen((snapshot) {
+        if (mounted && snapshot.docs.isNotEmpty) {
+          final fetched = snapshot.docs.map((doc) => doc.data()).toList();
+          setState(() {
+            _registros = fetched;
+            final eventosSet = _registros.map((log) => log['message'] as String? ?? '').toSet();
+            _tiposDeEventoUnicos = ["Todos", ...eventosSet.where((e) => e.isNotEmpty)];
+          });
+        }
+      }, onError: (e) {
+        debugPrint("Error escuchando historial: $e");
+      });
+    } catch (e) {
+      debugPrint("Error cargando historial: $e");
+    }
   }
 
   @override
   void dispose() {
-    _timeoutTimer?.cancel();
+    _logsSubscription?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final r = R(context);
+
+    // Filtrado en memoria
+    final filtered = _registros.where((row) {
+      if (maqueta != "Todas" && row["maqueta"] != maqueta) return false;
+      if (evento != "Todos" && row["message"] != evento) return false;
+      if (severidad != "Todas" && (row["type"] as String? ?? '').toLowerCase() != severidad.toLowerCase()) return false;
+      if (filtroRol != "Todos" && (row["role"] as String? ?? '') != filtroRol) return false;
+
+      final rowDate = _tryParseFirebaseTimestamp(row["timestamp"]);
+      if (rowDate != null) {
+        if (startDate != null && rowDate.isBefore(DateTime(startDate!.year, startDate!.month, startDate!.day))) return false;
+        if (endDate != null && rowDate.isAfter(DateTime(endDate!.year, endDate!.month, endDate!.day, 23, 59, 59))) return false;
+      }
+      return true;
+    }).toList();
+
+    final int totalPages = (filtered.isEmpty) ? 1 : (filtered.length / rowsPerPage).ceil();
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    final start = (currentPage - 1) * rowsPerPage;
+    final currentRows = filtered.skip(start).take(rowsPerPage).toList();
+
     return Scaffold(
       backgroundColor: AC.bg,
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('historial')
-            .orderBy('timestamp', descending: true)
-            .limit(100)
-            .snapshots(),
-        builder: (context, snapshot) {
-          List<Map<String, dynamic>> registros = List.from(_fallbackLogs);
-
-          if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
-            final docsData = snapshot.data!.docs.map((doc) {
-              return doc.data() as Map<String, dynamic>;
-            }).toList();
-            if (docsData.isNotEmpty) {
-              registros = docsData;
-            }
-
-            final eventosSet = registros.map((log) => log['message'] as String? ?? '').toSet();
-            _tiposDeEventoUnicos = ["Todos", ...eventosSet.where((e) => e.isNotEmpty)];
-          }
-
-          // Filtrado en memoria
-          final filtered = registros.where((row) {
-            if (maqueta != "Todas" && row["maqueta"] != maqueta) return false;
-            if (evento != "Todos" && row["message"] != evento) return false;
-            if (severidad != "Todas" && (row["type"] as String? ?? '').toLowerCase() != severidad.toLowerCase()) return false;
-            if (filtroRol != "Todos" && (row["role"] as String? ?? '') != filtroRol) return false;
-
-            final rowDate = _tryParseFirebaseTimestamp(row["timestamp"]);
-            if (rowDate != null) {
-              if (startDate != null && rowDate.isBefore(DateTime(startDate!.year, startDate!.month, startDate!.day))) return false;
-              if (endDate != null && rowDate.isAfter(DateTime(endDate!.year, endDate!.month, endDate!.day, 23, 59, 59))) return false;
-            }
-            return true;
-          }).toList();
-
-          final int totalPages = (filtered.isEmpty) ? 1 : (filtered.length / rowsPerPage).ceil();
-          if (currentPage > totalPages) currentPage = totalPages;
-
-          final start = (currentPage - 1) * rowsPerPage;
-          final currentRows = filtered.skip(start).take(rowsPerPage).toList();
-
-          return SingleChildScrollView(
-            padding: EdgeInsets.all(r.scale(20)),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Historial de Eventos', style: TextStyle(color: AC.white, fontSize: r.scale(24), fontWeight: FontWeight.bold)),
-              SizedBox(height: r.scale(8)),
-              Text('Consulta y analiza todos los eventos del sistema', style: TextStyle(color: Colors.white70, fontSize: r.scale(14))),
-              SizedBox(height: r.scale(24)),
-              _buildFilterBar(r),
-              SizedBox(height: r.scale(20)),
-              _buildTableContent(r, currentRows, false),
-              SizedBox(height: r.scale(20)),
-              _buildPaginationControls(r, currentPage, totalPages),
-            ]),
-          );
-        },
+      body: SingleChildScrollView(
+        padding: EdgeInsets.all(r.scale(20)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Historial de Eventos', style: TextStyle(color: AC.white, fontSize: r.scale(24), fontWeight: FontWeight.bold)),
+          SizedBox(height: r.scale(8)),
+          Text('Consulta y analiza todos los eventos del sistema', style: TextStyle(color: Colors.white70, fontSize: r.scale(14))),
+          SizedBox(height: r.scale(24)),
+          _buildFilterBar(r),
+          SizedBox(height: r.scale(20)),
+          _buildTableContent(r, currentRows, false),
+          SizedBox(height: r.scale(20)),
+          _buildPaginationControls(r, currentPage, totalPages),
+        ]),
       ),
     );
   }
