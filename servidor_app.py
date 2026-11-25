@@ -2,15 +2,23 @@ import socket
 import json
 import time
 
-# Variable global para mantener la conexión
+# Variable global para mantener la conexión y paros de emergencia
 conexion_cliente = None
+paro_emergencia_activado = False
+
+def comprobar_paro_emergencia():
+    """Comprueba si se envió una orden de paro de emergencia"""
+    global paro_emergencia_activado
+    if paro_emergencia_activado:
+        paro_emergencia_activado = False
+        return True
+    return False
 
 def recibir_mensaje(conn):
     """
     Lee mensajes directos (Socket RAW) de Flutter.
     """
     try:
-        # Leemos hasta el salto de línea o un bloque de datos
         datos = conn.recv(1024)
         if not datos:
             return None
@@ -26,7 +34,6 @@ def enviar_mensaje(conn, mensaje):
     Envía mensaje directo de texto a Flutter.
     """
     try:
-        # Agregamos salto de línea para que Flutter sepa que terminó el mensaje
         conn.send((mensaje + "\n").encode('utf-8'))
     except Exception as e:
         print("Error al enviar:", e)
@@ -47,7 +54,7 @@ def atender_conexiones(servidor, procesar_mensaje_callback):
     """
     Gestiona la conexión única sin bloquear el sistema.
     """
-    global conexion_cliente
+    global conexion_cliente, paro_emergencia_activado
 
     if conexion_cliente is None:
         try:
@@ -65,9 +72,12 @@ def atender_conexiones(servidor, procesar_mensaje_callback):
                 raise Exception("Enlace perdido")
 
             if mensaje_recibido != "":
-                # Ignorar latidos
+                # Ignorar latidos (ping)
                 if '"comando": "ping"' in mensaje_recibido:
                     return
+
+                if 'emergency_stop' in mensaje_recibido or 'reset' in mensaje_recibido:
+                    paro_emergencia_activado = True
 
                 print("App manda:", mensaje_recibido)
                 respuesta = procesar_mensaje_callback(mensaje_recibido)

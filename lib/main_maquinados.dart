@@ -265,46 +265,38 @@ class _ScadaMaquinadosDashboardState extends State<ScadaMaquinadosDashboard> {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
     try {
       if (!monitor.isStationActive('maquinados') || !mounted) return;
-      setState(() { _sensor('P1').active = true; }); _logAudit('Hardware: Iniciando movimiento entrada', LogType.info);
-      setState(() => _act('M1').on = true); await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _sensor('P1').active = false);
-      setState(() { _sensor('P2').active = true; }); setState(() => _act('M1').on = false);
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M2').on = true); setState(() => _sensor('R1').active = false);
-      await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('P2').active = false; });
-      setState(() => _act('M2').on = false); setState(() => _sensor('R1').active = true);
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M3').on = true);
-      await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('P3').active = true; });
-      setState(() => _act('M3').on = false); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M4').on = true);
-      await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M4').on = false); 
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _act('M3').on = true; _act('M6').on = true; }); setState(() => _sensor('P3').active = false);
-      await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('P3').active = false; _sensor('P4').active = true; });
-      setState(() { _act('M3').on = false; _act('M6').on = false; }); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M5').on = true);
-      await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M5').on = false);
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M6').on = true); await Future.delayed(const Duration(seconds: 1));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M6').on = false); setState(() { _sensor('P4').active = false; _sensor('R2').active = false; });
-      setState(() => _act('M7').on = true); await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('R2').active = true; });
-      setState(() => _act('M7').on = false); await Future.delayed(const Duration(milliseconds: 500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M8').on = true);
-      await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() { _sensor('P5').active = true; });
+      _logAudit('Paso 1: Avance banda transportadora entrada...', LogType.info);
+      if (mounted) setState(() { _sensor('P1').active = true; _act('M1').on = true; });
+      await Future.delayed(const Duration(seconds: 2));
+      if (!monitor.isStationActive('maquinados') || !mounted) return;
+      if (mounted) setState(() { _sensor('P1').active = false; _act('M1').on = false; });
+
+      _logAudit('Paso 2: Sujeción de pieza (Clamping)...', LogType.info);
+      if (mounted) setState(() { _act('M2').on = true; _sensor('R1').active = true; });
       await Future.delayed(const Duration(seconds: 1));
-      if (!monitor.isStationActive('maquinados') || !mounted) return; setState(() => _act('M8').on = false);
-      setState(() { _sensor('P5').active = false; });
-      _logAudit('✔ PIEZA FINALIZADA EN HARDWARE', LogType.success);
+      if (!monitor.isStationActive('maquinados') || !mounted) return;
+
+      _logAudit('Paso 3: Proceso de Maquinado / Husillo (Spindle ON)...', LogType.info);
+      if (mounted) setState(() => _act('M3').on = true);
+      await Future.delayed(const Duration(seconds: 3));
+      if (!monitor.isStationActive('maquinados') || !mounted) return;
+      if (mounted) setState(() => _act('M3').on = false);
+
+      _logAudit('Paso 4: Liberación de sujeción...', LogType.info);
+      if (mounted) setState(() { _act('M2').on = false; _sensor('R1').active = false; });
+      await Future.delayed(const Duration(seconds: 1));
+      if (!monitor.isStationActive('maquinados') || !mounted) return;
+
+      _logAudit('Paso 5: Empujador y banda de salida...', LogType.info);
+      if (mounted) setState(() { _act('M1').on = true; _sensor('P2').active = true; });
+      await Future.delayed(const Duration(seconds: 2));
+      if (!monitor.isStationActive('maquinados') || !mounted) return;
+      if (mounted) setState(() { _act('M1').on = false; _sensor('P2').active = false; });
+
+      _logAudit('✔ CICLO EXITOSO. Maquinado completado.', LogType.success);
     } catch (e) {
-      _logAudit('ERROR en la secuencia automática: $e', LogType.error);
+      debugPrint('Error en maquinados: $e');
+      _logAudit('Error en la secuencia automática.', LogType.error);
     }
   }
 

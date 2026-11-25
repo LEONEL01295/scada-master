@@ -335,22 +335,39 @@ class _ScadaNeumaticoScreenState extends State<ScadaNeumaticoBoard> {
     final monitor = Provider.of<UsageMonitor>(context, listen: false);
     try {
       if (!monitor.isStationActive('neumatico') || !mounted) return;
-      _toggleActuator('V1', true); setState(() => _sensor('P1').active = false);
+      _logAudit('Paso 1: Encendiendo compresor...', _NLogType.info);
+      if (mounted) setState(() { _act('M1').on = true; _sensor('P1').active = true; });
+      await Future.delayed(const Duration(seconds: 2));
+      if (!monitor.isStationActive('neumatico') || !mounted) return;
+      if (mounted) setState(() => _act('M1').on = false);
+
+      _logAudit('Paso 2: Pistón empuje (Sale/Retrae)...', _NLogType.info);
+      if (mounted) setState(() => _act('V1').on = true);
       await Future.delayed(const Duration(seconds: 1));
-      if (!monitor.isStationActive('neumatico') || !mounted) return; _toggleActuator('V1', false);
-      _toggleActuator('M3', true); await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('neumatico') || !mounted) return; setState(() => _sensor('P2').active = true);
-      _toggleActuator('M3', false); _toggleActuator('M2', true);
-      await Future.delayed(const Duration(seconds: 1));
-      if (!monitor.isStationActive('neumatico') || !mounted) return; setState(() => _sensor('S1').active = true);
-      _toggleActuator('M2', false); _toggleActuator('V3', true);
+      if (!monitor.isStationActive('neumatico') || !mounted) return;
+      if (mounted) setState(() => _act('V1').on = false);
+
+      _logAudit('Paso 3: Girando mesa y alineando...', _NLogType.info);
+      if (mounted) setState(() => _act('M2').on = true);
       await Future.delayed(const Duration(milliseconds: 1500));
-      if (!monitor.isStationActive('neumatico') || !mounted) return; _toggleActuator('V3', false);
-      _toggleActuator('V4', true); await Future.delayed(const Duration(seconds: 1));
-      if (!monitor.isStationActive('neumatico') || !mounted) return; _toggleActuator('V4', false);
-      if(mounted) setState(() { _sensor('P2').active = false; _sensor('S1').active = false; _sensor('P1').active = true; });
-      _logAudit('CICLO EXITOSO. Pieza terminada.', _NLogType.success);
-    } catch (_) {
+      if (!monitor.isStationActive('neumatico') || !mounted) return;
+      if (mounted) setState(() { _act('M2').on = false; _sensor('P2').active = true; });
+
+      _logAudit('Paso 4: Pistón empaquetador...', _NLogType.info);
+      if (mounted) setState(() => _act('V3').on = true);
+      await Future.delayed(const Duration(seconds: 1));
+      if (!monitor.isStationActive('neumatico') || !mounted) return;
+      if (mounted) setState(() => _act('V3').on = false);
+
+      _logAudit('Paso 5: Expulsión y banda transportadora...', _NLogType.info);
+      if (mounted) setState(() { _act('V4').on = true; _act('M3').on = true; });
+      await Future.delayed(const Duration(seconds: 2));
+      if (!monitor.isStationActive('neumatico') || !mounted) return;
+      if (mounted) setState(() { _act('V4').on = false; _act('M3').on = false; _sensor('P2').active = false; _sensor('P1').active = true; });
+
+      _logAudit('✔ CICLO EXITOSO. Pieza procesada en Neumático.', _NLogType.success);
+    } catch (e) {
+      debugPrint('Error en neumático: $e');
       _logAudit('Error en la secuencia automática.', _NLogType.error);
     }
   }
