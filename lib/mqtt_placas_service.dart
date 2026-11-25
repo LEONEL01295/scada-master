@@ -439,6 +439,12 @@ class MqttPlacasService extends ChangeNotifier {
     if (comandoOrAccion is Map<String, dynamic>) {
       final m = comandoOrAccion['maqueta']?.toString().toLowerCase();
 
+      if (m == 'general') {
+        placa1.send(comandoOrAccion);
+        placa2.send(comandoOrAccion);
+        return;
+      }
+
       if (m == 'robot' ||
           m == 'prensado' ||
           m == 'placa1') {
@@ -464,6 +470,12 @@ class MqttPlacasService extends ChangeNotifier {
       if (target != null) 'target': target,
       if (target != null) 'piezas': target,
     };
+
+    if (m == 'general') {
+      placa1.send(payload);
+      placa2.send(payload);
+      return;
+    }
 
     if (m == 'robot' || m == 'prensado' || m == 'placa1') {
       placa1.send(payload);
