@@ -56,7 +56,7 @@ class PlateHandler extends ChangeNotifier {
       final socket = await Socket.connect(
         ip,
         port,
-        timeout: const Duration(seconds: 5),
+        timeout: const Duration(seconds: 3),
       );
 
       if (_disposed || _cerrando) {
@@ -75,7 +75,7 @@ class PlateHandler extends ChangeNotifier {
           _onDisconnect();
         },
         onDone: _onDisconnect,
-        cancelOnError: true,
+        cancelOnError: false,
       );
 
       conectado = true;
@@ -298,8 +298,8 @@ class PlateHandler extends ChangeNotifier {
     }
 
     _reconnectTimer = Timer(
-      const Duration(seconds: 5),
-          () {
+      const Duration(seconds: 2),
+      () {
         if (!_disposed && !_cerrando && !conectado) {
           connect();
         }

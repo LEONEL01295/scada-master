@@ -9,8 +9,8 @@ led = Pin(2, Pin.OUT)
 # --- PLACA 2: ESCLAVO / ESTACIÓN ---
 
 # 1. PAUSA DE CORTESÍA PARA ARRANQUE SIMULTÁNEO
-print("\nEsperando 15s a que Placa 1 esté lista...")
-time.sleep(15)
+print("\nIniciando conexión de Placa 2...")
+time.sleep(2)
 
 sta = network.WLAN(network.STA_IF)
 sta.active(True)
