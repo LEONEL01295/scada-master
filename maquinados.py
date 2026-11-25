@@ -10,6 +10,9 @@ DIRECCION_ENTRADAS_P2 = 0x22
 DIRECCION_ENTRADAS_P1 = 0x21 # Sensores imanes
 DIRECCION_RELES       = 0x24
 
+# Estado interno de relés (0xFF = Todos Apagados)
+estado_reles_maquinados = 0xFF
+
 # Máscaras Maquinados (Originales)
 btm_est5  = 0b10000100
 btm_est6  = 0b00000001
@@ -20,16 +23,22 @@ btm_est10 = 0b00100000
 
 def apagar_todo():
     """Apaga actuadores de maquinados (0b11111111)"""
-    try: i2c.writeto(DIRECCION_RELES, bytes([0b11111111]))
-    except: pass
+    global estado_reles_maquinados
+    estado_reles_maquinados = 0xFF
+    try: i2c.writeto(DIRECCION_RELES, bytes([0xFF]))
+    except Exception as e: print("Error I2C Maquinados apagar:", e)
 
 def controlar_actuador(rele_index, encender):
-    """Control manual para Maquinados"""
+    """Control manual para Maquinados manteniendo estado en memoria"""
+    global estado_reles_maquinados
     try:
-        actual = i2c.readfrom(DIRECCION_RELES, 1)[0]
-        nuevo = (actual & ~(1 << rele_index)) if encender else (actual | (1 << rele_index))
-        i2c.writeto(DIRECCION_RELES, bytes([nuevo]))
-    except: pass
+        if encender:
+            estado_reles_maquinados &= ~(1 << rele_index)
+        else:
+            estado_reles_maquinados |= (1 << rele_index)
+        i2c.writeto(DIRECCION_RELES, bytes([estado_reles_maquinados]))
+        print(f"Maquinados Relé {rele_index} -> {encender} (Hex: {hex(estado_reles_maquinados)})")
+    except Exception as e: print("Error I2C Maquinados manual:", e)
 
 def ejecutar_ciclo(piezas):
     """Secuencia PROTEGIDA Y FIABLE de Maquinados con Tiempos de Seguridad"""

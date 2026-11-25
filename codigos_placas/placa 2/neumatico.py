@@ -9,6 +9,9 @@ i2c = I2C(0, scl=Pin(5), sda=Pin(4))
 DIRECCION_ENTRADAS = 0x22
 DIRECCION_RELES    = 0x25
 
+# Estado interno de relés (0xFF = Todos Apagados)
+estado_reles_neumatico = 0xFF
+
 # Máscaras Sensores Neumático (Originales)
 btm_est1  = 0b00000101
 btm_est2  = 0b00001110
@@ -17,16 +20,22 @@ btm_est4  = 0b00100100
 
 def apagar_todo():
     """Apaga actuadores de neumático (0b11111111)"""
-    try: i2c.writeto(DIRECCION_RELES, bytes([0b11111111]))
-    except: pass
+    global estado_reles_neumatico
+    estado_reles_neumatico = 0xFF
+    try: i2c.writeto(DIRECCION_RELES, bytes([0xFF]))
+    except Exception as e: print("Error I2C Neumático apagar:", e)
 
 def controlar_actuador(rele_index, encender):
-    """Control manual para Neumático"""
+    """Control manual para Neumático manteniendo estado en memoria"""
+    global estado_reles_neumatico
     try:
-        actual = i2c.readfrom(DIRECCION_RELES, 1)[0]
-        nuevo = (actual & ~(1 << rele_index)) if encender else (actual | (1 << rele_index))
-        i2c.writeto(DIRECCION_RELES, bytes([nuevo]))
-    except: pass
+        if encender:
+            estado_reles_neumatico &= ~(1 << rele_index)
+        else:
+            estado_reles_neumatico |= (1 << rele_index)
+        i2c.writeto(DIRECCION_RELES, bytes([estado_reles_neumatico]))
+        print(f"Neumático Relé {rele_index} -> {encender} (Hex: {hex(estado_reles_neumatico)})")
+    except Exception as e: print("Error I2C Neumático manual:", e)
 
 def ejecutar_ciclo(piezas):
     """Secuencia PROTEGIDA de Neumático - Garantiza el paro de la mesa giratoria"""

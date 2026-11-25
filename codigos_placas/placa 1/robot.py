@@ -1,12 +1,16 @@
 from machine import Pin, I2C
 import time
+import servidor_app
 
 # I2C compartido
 i2c = I2C(0, scl=Pin(5), sda=Pin(4))
 
-# Direcciones I2C
+# Direcciones I2C (Placa 1)
 DIRECCION_ENTRADAS = 0x21
 DIRECCION_RELES    = 0x24
+
+# Estado interno de relés (0xFF = Todos Apagados)
+estado_reles_robot = 0xFF
 
 # Máscaras de Sensado
 MASK_S1 = 0b00000010  # M1: Pulsos de la base
@@ -17,21 +21,25 @@ MASK_S8 = 0b10000000  # M4: Tope/Referencia de pinza abierta
 
 def apagar_todo():
     """Apaga todos los actuadores del robot"""
-    i2c.writeto(DIRECCION_RELES, bytes([0b11111111]))
+    global estado_reles_robot
+    estado_reles_robot = 0xFF
+    try: i2c.writeto(DIRECCION_RELES, bytes([0xFF]))
+    except Exception as e: print("Error I2C Robot apagar:", e)
 
 def controlar_actuador(rele_index, encender):
-    """Control manual de un relé específico (0-7)"""
+    """Control manual de un relé específico (0-7) manteniendo estado en memoria"""
+    global estado_reles_robot
     try:
-        actual = i2c.readfrom(DIRECCION_RELES, 1)[0]
         if encender:
-            nuevo = actual & ~(1 << rele_index)
+            estado_reles_robot &= ~(1 << rele_index)
         else:
-            nuevo = actual | (1 << rele_index)
-        i2c.writeto(DIRECCION_RELES, bytes([nuevo]))
-    except: pass
+            estado_reles_robot |= (1 << rele_index)
+        i2c.writeto(DIRECCION_RELES, bytes([estado_reles_robot]))
+        print(f"Robot Relé {rele_index} -> {encender} (Hex: {hex(estado_reles_robot)})")
+    except Exception as e: print("Error I2C Robot manual:", e)
 
 def ejecutar_ciclo(piezas):
-    """Ejecuta la secuencia completa de estados del robot"""
+    """Ejecuta la secuencia completa del robot con tiempos de seguridad e interrupción de emergencia"""
     EST_M4_ABRIR_1        = 1
     EST_M2_ATRAS_1        = 2
     EST_M2_ADELANTE_55    = 3
@@ -51,13 +59,16 @@ def ejecutar_ciclo(piezas):
     EST_FIN_DEFINITIVO    = 24
 
     for p in range(piezas):
+        if servidor_app.comprobar_paro_emergencia(): apagar_todo(); return
         print(f"--- Robot: Iniciando Pieza {p+1}/{piezas} ---")
         estado = EST_M4_ABRIR_1
         motor_inicializado = False
         contador_pulsos = 0
         ultimo_pulso = 0
+        tiempo_inicio = time.ticks_ms()
 
         while estado != EST_FIN_DEFINITIVO:
+            if servidor_app.comprobar_paro_emergencia(): apagar_todo(); return
             try:
                 # PASO 1: ABRIR PINZA
                 if estado == EST_M4_ABRIR_1:
@@ -67,10 +78,10 @@ def ejecutar_ciclo(piezas):
                             estado = EST_M2_ATRAS_1
                             continue
                         i2c.writeto(DIRECCION_RELES, bytes([0b11111101]))
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
-                    if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S8):
-                        apagar_todo()
-                        time.sleep(0.5)
+                    if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S8) or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2000:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M2_ATRAS_1
                         motor_inicializado = False
 
@@ -78,10 +89,10 @@ def ejecutar_ciclo(piezas):
                 elif estado == EST_M2_ATRAS_1:
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b11101111]))
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
-                    if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S4):
-                        apagar_todo()
-                        time.sleep(0.5)
+                    if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S4) or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2500:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M2_ADELANTE_55
                         motor_inicializado = False
 
@@ -90,15 +101,15 @@ def ejecutar_ciclo(piezas):
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b11011111]))
                         contador_pulsos = 0
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     curr = 1 if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S3) else 0
                     if curr == 1 and ultimo_pulso == 0:
                         contador_pulsos += 1
                         print(f"M2: {contador_pulsos}/68")
                     ultimo_pulso = curr
-                    if contador_pulsos >= 68:
-                        apagar_todo()
-                        time.sleep(0.5)
+                    if contador_pulsos >= 68 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 3000:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M3_SUBIR_1
                         motor_inicializado = False
 
@@ -110,25 +121,24 @@ def ejecutar_ciclo(piezas):
                         motor_inicializado = True
                     lectura = i2c.readfrom(DIRECCION_ENTRADAS, 1)[0]
                     if lectura == 119 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 3000:
-                        apagar_todo()
-                        time.sleep(0.5)
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M1_IZQ_75
                         motor_inicializado = False
 
-                # PASO 5: M1 IZQUIERDA (75 PULSOS)
+                # PASO 5: M1 IZQUIERDA (75 PULSOS CON TIMEOUT DE SEGURIDAD)
                 elif estado == EST_M1_IZQ_75:
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b01111111]))
                         contador_pulsos = 0
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     curr = 1 if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S1) else 0
                     if curr == 1 and ultimo_pulso == 0:
                         contador_pulsos += 1
                         print(f"M1-IZQ: {contador_pulsos}/75")
                     ultimo_pulso = curr
-                    if contador_pulsos >= 75:
-                        apagar_todo()
-                        time.sleep(0.5)
+                    if contador_pulsos >= 75 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 4000:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M3_BAJAR_1
                         motor_inicializado = False
 
@@ -139,23 +149,22 @@ def ejecutar_ciclo(piezas):
                         tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     if time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2900:
-                        apagar_todo()
-                        time.sleep(0.5)
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M4_CERRAR_1
                         motor_inicializado = False
 
-                # PASO 7: CERRAR PINZA (7 PULSOS)
+                # PASO 7: CERRAR PINZA (9 PULSOS O TIMEOUT)
                 elif estado == EST_M4_CERRAR_1:
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b11111110]))
                         contador_pulsos = 0
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     curr = 1 if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S7) else 0
                     if curr == 1 and ultimo_pulso == 0: contador_pulsos += 1
                     ultimo_pulso = curr
-                    if contador_pulsos >= 9:
-                        apagar_todo()
-                        time.sleep(0.5)
+                    if contador_pulsos >= 9 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2000:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M3_SUBIR_2
                         motor_inicializado = False
 
@@ -167,23 +176,22 @@ def ejecutar_ciclo(piezas):
                         motor_inicializado = True
                     lectura = i2c.readfrom(DIRECCION_ENTRADAS, 1)[0]
                     if lectura == 119 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 3000:
-                        apagar_todo()
-                        time.sleep(0.5)
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M1_DER_25
                         motor_inicializado = False
 
-                # PASO 9: M1 DERECHA (25 PULSOS)
+                # PASO 9: M1 DERECHA (25 PULSOS CON TIMEOUT DE SEGURIDAD)
                 elif estado == EST_M1_DER_25:
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b10111111]))
                         contador_pulsos = 0
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     curr = 1 if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S1) else 0
                     if curr == 1 and ultimo_pulso == 0: contador_pulsos += 1
                     ultimo_pulso = curr
-                    if contador_pulsos >= 25:
-                        apagar_todo()
-                        time.sleep(0.5)
+                    if contador_pulsos >= 25 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2500:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M3_BAJAR_2
                         motor_inicializado = False
 
@@ -194,34 +202,33 @@ def ejecutar_ciclo(piezas):
                         tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     if time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2900:
-                        apagar_todo()
-                        time.sleep(0.5)
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M4_ABRIR_ESPERA
                         motor_inicializado = False
 
-                # PASO 13: ABRIR PINZA (ESPERA MAQUINADO)
+                # PASO 13: ABRIR PINZA
                 elif estado == EST_M4_ABRIR_ESPERA:
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b11111101]))
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
-                    if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S8):
-                        apagar_todo()
-                        time.sleep(1) # Simulación breve de espera
+                    if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S8) or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2000:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M4_CERRAR_2
                         motor_inicializado = False
 
-                # PASO 19: CERRAR PINZA RETORNO (7 PULSOS)
+                # PASO 19: CERRAR PINZA RETORNO
                 elif estado == EST_M4_CERRAR_2:
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b11111110]))
                         contador_pulsos = 0
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     curr = 1 if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S7) else 0
                     if curr == 1 and ultimo_pulso == 0: contador_pulsos += 1
                     ultimo_pulso = curr
-                    if contador_pulsos >= 9:
-                        apagar_todo()
-                        time.sleep(0.5)
+                    if contador_pulsos >= 9 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2000:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M3_SUBIR_3
                         motor_inicializado = False
 
@@ -233,23 +240,22 @@ def ejecutar_ciclo(piezas):
                         motor_inicializado = True
                     lectura = i2c.readfrom(DIRECCION_ENTRADAS, 1)[0]
                     if lectura == 119 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 3000:
-                        apagar_todo()
-                        time.sleep(0.5)
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M1_DER_50
                         motor_inicializado = False
 
-                # PASO 21: M1 DERECHA FINAL (50 PULSOS)
+                # PASO 21: M1 DERECHA FINAL (50 PULSOS CON TIMEOUT DE SEGURIDAD)
                 elif estado == EST_M1_DER_50:
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b10111111]))
                         contador_pulsos = 0
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     curr = 1 if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S1) else 0
                     if curr == 1 and ultimo_pulso == 0: contador_pulsos += 1
                     ultimo_pulso = curr
-                    if contador_pulsos >= 50:
-                        apagar_todo()
-                        time.sleep(0.5)
+                    if contador_pulsos >= 50 or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 3500:
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M3_BAJAR_3
                         motor_inicializado = False
 
@@ -260,8 +266,7 @@ def ejecutar_ciclo(piezas):
                         tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
                     if time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2700:
-                        apagar_todo()
-                        time.sleep(0.5)
+                        apagar_todo(); time.sleep(0.5)
                         estado = EST_M4_ABRIR_FINAL
                         motor_inicializado = False
 
@@ -269,8 +274,9 @@ def ejecutar_ciclo(piezas):
                 elif estado == EST_M4_ABRIR_FINAL:
                     if not motor_inicializado:
                         i2c.writeto(DIRECCION_RELES, bytes([0b11111101]))
+                        tiempo_inicio = time.ticks_ms()
                         motor_inicializado = True
-                    if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S8):
+                    if (i2c.readfrom(DIRECCION_ENTRADAS, 1)[0] & MASK_S8) or time.ticks_diff(time.ticks_ms(), tiempo_inicio) >= 2000:
                         apagar_todo()
                         estado = EST_FIN_DEFINITIVO
 
