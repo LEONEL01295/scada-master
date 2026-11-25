@@ -382,6 +382,9 @@ class MqttPlacasService extends ChangeNotifier {
 
     placa1.addListener(_notify);
     placa2.addListener(_notify);
+
+    // Auto-iniciar conexión con ambas placas de inmediato
+    conectar();
   }
 
   bool get conectado => placa1.conectado || placa2.conectado;
